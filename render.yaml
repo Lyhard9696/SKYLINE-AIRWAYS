@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: skyline-airways
+    runtime: python
+    plan: free
+    buildCommand: python --version
+    startCommand: python app.py
+    healthCheckPath: /health
+    autoDeploy: true
