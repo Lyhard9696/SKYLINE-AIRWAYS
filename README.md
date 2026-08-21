@@ -1,153 +1,154 @@
-# SKYLINE AIRWAYS — v0.4 REALISM / IMMERSIVE WORLD
+# SKYLINE AIRWAYS — v0.5 REALISM OPERATIONS
 
-Version Web full-stack jouable, pensée pour Render + iPhone/PC.
+Version Web full-stack jouable, pensée pour Render, iPhone/iPad et PC. Cette version garde la carrière v0.4 et ajoute une couche de gestion beaucoup plus profonde : personnel, pricing, finance, banque, marketing, partenariats, hôtels, service à bord, opérations au sol, hub réellement achetable et trafic réel optionnel.
 
-## Ce qui change par rapport à v0.3
+## Mise à jour depuis v0.4
 
-### Carrière et comptes
-- Création de compte / connexion persistante.
-- Base PostgreSQL sur Render.
-- Nouveau joueur : 180 M€ et **aucun hub imposé**.
-- Choix du premier hub parmi **85 937 aéroports, héliports et bases** du catalogue embarqué.
-- Possibilité d’acheter ensuite d’autres hubs partout dans le monde.
-- Chaque hub garde ses améliorations indépendamment.
+La v0.5 est conçue pour être déposée directement par-dessus la v0.4 dans le même dépôt GitHub. Les nouvelles tables PostgreSQL sont créées automatiquement au démarrage. Les comptes, hubs, avions et routes existants sont conservés.
 
-### Hub satellite réellement navigable
-- La page Hub occupe tout l’écran.
-- Fond satellite géographique centré sur l’aéroport réellement acheté.
-- Zoom, déplacement, inclinaison et rotation de caméra avec MapLibre.
-- Pistes connues issues du catalogue aéroportuaire.
-- Quand OpenStreetMap/Overpass est disponible : récupération des **taxiways, aprons et positions de porte** réelles autour du hub.
-- Repli automatique sur les pistes OurAirports si Overpass est indisponible.
-- Les avions et véhicules d’ambiance se déplacent sur le réseau de surface lorsque celui-ci est disponible.
-- Trafic OpenSky autour du hub lorsque le service public répond, complété par du trafic IA/fictif.
+## Temps de simulation
 
-### Développement du hub
-Le hub possède **53 systèmes d’infrastructure**, représentant **597 niveaux cumulés** :
-- portes au contact ;
-- parkings avions éloignés ;
-- postes gros-porteurs ;
-- zone régionale ;
-- aires de trafic ;
-- taxiways ;
-- dégivrage ;
-- fuel farm ;
-- pushback ;
-- véhicules de piste ;
-- terminal ;
-- check-in ;
-- bornes / self bag drop ;
-- embarquement ;
-- arrivées ;
-- bagages ;
-- toilettes ;
+`SIM_SPEED = 3.0`.
+
+Le temps simulé avance trois fois plus vite que le temps réel : un vol de 8 heures réelles de block-time dure environ 2 h 40 dans le jeu, soit ~33 % de sa durée réelle. Les phases sol sont elles aussi simulées : nettoyage, catering, ravitaillement, embarquement, pushback, roulage, vol, roulage arrivée et débarquement.
+
+## Personnel
+
+Nouvel espace **Gestion → Personnel** :
+- commandants / copilotes ;
+- PNC ;
+- mécaniciens ;
+- agents de piste ;
+- RH ;
+- directeur marketing ;
+- directeur des opérations ;
+- directeur financier.
+
+Les pilotes ont des qualifications par famille d'appareil. Si l'effectif n'est pas suffisant, OPS peut utiliser du personnel contractuel, mais cela augmente fortement le coût du vol.
+
+## Prix des billets et demande
+
+Chaque ligne possède maintenant :
+- prix Economy ;
+- Premium ;
+- Business ;
+- First ;
+- frais bagages ;
+- taux de surbooking.
+
+Le remplissage estimé varie avec le prix, la réputation, le niveau de service, les campagnes marketing et les partenariats. Le détail de rentabilité est recalculé avant validation.
+
+## Finance / banque
+
+Nouvel espace **Gestion → Finance / Banque** :
+- trésorerie ;
+- masse salariale ;
+- dette ;
+- historique des transactions ;
+- résultats par vol ;
+- emprunts bancaires ;
+- taux d'intérêt ;
+- remboursement partiel.
+
+Chaque rotation terminée produit une fiche de vol avec passagers, recettes, coûts et bénéfice/perte.
+
+## Marketing, partenariats et hôtels
+
+Le joueur peut :
+- recruter un directeur marketing ;
+- lancer des campagnes publicitaires ;
+- signer des partenariats ;
+- développer des accords hôteliers ;
+- construire ses propres hôtels dans ses hubs ;
+- agrandir progressivement ces hôtels.
+
+## Service à bord et appareil
+
+Chaque avion peut recevoir des améliorations indépendantes :
 - Wi-Fi ;
-- signalétique ;
-- sûreté ;
-- police aux frontières ;
-- douanes ;
-- pompiers ;
-- centre médical ;
-- centre de crise ;
-- duty free ;
-- galerie commerciale ;
-- restauration ;
-- hôtel ;
-- parkings voitures ;
-- transports terrestres ;
-- lounges Business / First ;
-- suites ;
-- Fast Track ;
-- maintenance ;
-- pièces ;
-- catering ;
-- service à bord ;
-- nettoyage ;
-- centre équipages ;
-- formation ;
-- centre OPS ;
-- cargo ;
-- chaîne froide ;
-- express ;
-- fret lourd ;
-- énergie ;
-- eau ;
-- systèmes IT ;
-- et leurs niveaux successifs.
+- repas ;
+- divertissement ;
+- confort cabine ;
+- formation du service cabine ;
+- standard de nettoyage.
 
-Chaque marqueur est cliquable directement sur la vue aérienne : coût, niveau, prérequis, construction/amélioration.
+Ces niveaux ont un coût mais influencent l'attractivité et la rentabilité des vols.
 
-### Catalogue aéronefs
-Le catalogue embarqué contient :
-- **591 types ICAO** ;
-- **197 variantes / motorisations** ;
-- Airbus, Boeing, ATR, Embraer, Bombardier et de nombreux autres constructeurs ;
-- jets, turbopropulseurs, hélicoptères, appareils historiques et autres aéronefs présents dans le catalogue.
+## Studio de livrée
 
-Chaque appareil acheté est individuel :
-- immatriculation ;
-- base ;
-- état ;
-- achat ou leasing ;
-- variante ;
-- livrée ;
-- rotation affectée ;
-- position simulée.
+Le rendu avion a été remplacé par un aperçu SVG spécifique au type d'aéronef au lieu d'un simple pictogramme. Sont personnalisables :
+- fuselage ;
+- couleur secondaire ;
+- accent ;
+- dérive ;
+- moteurs ;
+- ventre ;
+- nez ;
+- motif ;
+- taille et position du logo.
 
-### Livrées et identité
-- couleurs principales / secondaires / accent ;
-- plusieurs styles de livrée ;
-- texte de logo ;
-- import d’un logo personnel ;
-- livrée personnalisable appareil par appareil.
+Ce studio reste un éditeur 2D Web. Des modèles 3D photoréalistes et les livrées officielles des compagnies nécessitent des assets 3D et les droits/licences correspondants.
 
-Les vraies marques/livrées commerciales ne sont pas livrées comme assets officiels : leur utilisation commerciale nécessite les droits/licences correspondants. L’éditeur est conçu pour les ajouter plus tard sans changer le moteur.
+## Cockpit dynamique
 
-### Globe 3D
-- Globe satellite manipulable à 360° ;
-- 2 200+ grands/moyens aéroports visibles sur le globe ;
-- hubs possédés ;
-- routes de la compagnie ;
-- segments partenaires ;
-- tes avions en temps simulé ;
-- trafic fictif mondial animé pour garder le monde vivant ;
-- rotation automatique facultative du globe.
+La vue cockpit est une caméra d'observation, pas un simulateur pilotable :
+- cadre cockpit fixe ;
+- paysage satellite qui avance avec l'avion ;
+- cap suivi automatiquement ;
+- altitude / vitesse / carburant / phase de vol ;
+- ciel jour, crépuscule ou nuit en fonction de la position ;
+- étoiles et éclairage nocturne ;
+- couverture nuageuse issue de la météo locale ;
+- pluie et effets d'orage lorsqu'ils sont cohérents avec la météo.
 
-### Météo
-- Radar mondial RainViewer superposé au globe lorsque disponible ;
-- météo locale Open-Meteo pour la position des avions ;
-- nuages et effets d’orage dans la vue cockpit selon les conditions récupérées.
+Le vrai cockpit 3D de chaque A320/A350/777/etc., les nuages volumétriques et le relief photoréaliste sont une étape Unreal Engine ultérieure. Cette version stabilise la logique Web d'observation dynamique.
 
-### Vue cockpit dynamique
-La vue cockpit est une **vue d’observation**, pas un cockpit pilotable :
-- paysage satellite qui défile selon la position réelle simulée du vol ;
-- cap de la caméra aligné sur la route ;
-- montée / croisière / descente ;
-- altitude ;
-- vitesse ;
-- carburant ;
-- météo ;
-- couches nuageuses animées ;
-- éclairs lorsque le moteur météo détecte des conditions orageuses.
+## Hub interactif
 
-### Routes et opérations
-- même avion physique sur toute la rotation aller/retour ;
-- turnaround ;
-- pushback ;
-- roulage départ ;
-- vol ;
-- roulage arrivée ;
-- retour ;
-- simulation accélérée ;
-- autonomie ;
-- compatibilité piste ;
-- restrictions OPS ;
-- exemple de liaison partenaire via Istanbul ;
-- scénario géopolitique remplaçable par un futur fournisseur NOTAM/licencié.
+La vue aérienne garde le fond satellite et les données OpenStreetMap lorsqu'elles sont disponibles. La v0.5 ajoute :
+- portes réelles cliquables ;
+- positions de parking cliquables ;
+- pistes visibles ;
+- infrastructure non acquise affichée comme verrouillée / grisée ;
+- achat directement depuis la vue aérienne ;
+- services de hub avec cadenas/prérequis ;
+- niveaux multiples ;
+- véhicules de service associés à la phase réelle de l'avion ;
+- déplacements sur le réseau de taxiway lorsqu'un réseau OSM exploitable existe.
 
-## Installation sur Render
+Les phases de service au sol sont liées au vol : nettoyage, catering, fuel, passagers et pushback ne sont plus seulement des éléments décoratifs.
 
-Le dépôt doit avoir ces éléments à la racine :
+## Trafic aérien réel
+
+La v0.5 n'imite pas ou ne scrape pas le site Flightradar24.
+
+- Si la variable Render `FR24_API_TOKEN` est configurée avec un abonnement API Flightradar24 autorisé, le serveur utilise l'API officielle Live Flight Positions.
+- Sans token FR24, le jeu essaie OpenSky dans la zone visible.
+- Le globe n'ajoute plus les anciens faux avions décoratifs lorsqu'un trafic réel peut être interrogé.
+
+Le fond satellite est indépendant du fournisseur de trafic aérien.
+
+## Météo et globe
+
+- globe MapLibre 3D ;
+- rotation 360° ;
+- représentation approximative jour/nuit sur le globe ;
+- radar RainViewer lorsque disponible ;
+- météo locale Open-Meteo dans le cockpit ;
+- routes et avions SKYLINE en temps simulé.
+
+## Données / réalisme
+
+Le catalogue embarqué conserve les données v0.4 :
+- 85k+ aéroports/héliports/bases ;
+- 591 types d'aéronefs ;
+- variantes et motorisations selon les données disponibles.
+
+Les vraies livrées, marques et modèles 3D officiels ne sont pas distribués avec ce prototype sans licence.
+
+## Déploiement Render
+
+Le dépôt doit garder à sa racine :
 
 ```text
 main.py
@@ -156,69 +157,39 @@ logic.py
 catalog.py
 requirements.txt
 render.yaml
+README.md
 data/
 static/
 templates/
-README.md
 ```
 
-### Si ton Blueprint SKYLINE existe déjà
-1. Remplace les fichiers de ton dépôt GitHub par ceux de cette version.
-2. Fais un commit, par exemple :
-   `SKYLINE v0.4 Realism Immersive World`
-3. Render détecte automatiquement le commit.
-4. Le Blueprint réutilise la base `skyline-db` existante si elle est déjà présente.
-5. Attends `Deploy live`.
-6. Ouvre l’URL habituelle `https://skyline-airways.onrender.com`.
+Le Blueprint Render existant peut être conservé. Le `render.yaml` utilise la même base `skyline-db`.
 
-### Nouveau Blueprint
-`render.yaml` configure automatiquement :
-- service Web Python ;
-- PostgreSQL `skyline-db` ;
-- `DATABASE_URL` ;
-- secret de session ;
-- cookie HTTPS ;
-- health check `/health`.
+### Option Flightradar24 officielle
 
-## Test local
-
-Python 3.11+ recommandé.
-
-```bash
-pip install -r requirements.txt
-uvicorn main:app --reload --port 10000
-```
-
-Puis :
+Dans Render → service `skyline-airways` → Environment, ajouter si tu possèdes un abonnement API autorisé :
 
 ```text
-http://localhost:10000
+FR24_API_TOKEN=ton_token_api
 ```
 
-Sans `DATABASE_URL`, le jeu crée automatiquement une base SQLite locale `skyline.db`.
+Cette variable est facultative. Sans elle, le reste du jeu fonctionne et le trafic tente OpenSky.
 
-## Sources externes utilisées au runtime
+## Vérifications effectuées avant packaging
 
-Le jeu fonctionne même si certaines sources publiques sont temporairement indisponibles, mais les fonctions les plus riches utilisent :
-- Esri World Imagery : fond satellite ;
-- OpenStreetMap / Overpass : réseau airside quand disponible ;
-- OurAirports : aéroports et pistes embarqués dans le catalogue ;
-- OpenSky : trafic réel autour du hub quand disponible ;
-- RainViewer : radar météo ;
-- Open-Meteo : météo locale cockpit.
+- compilation Python ;
+- validation syntaxique JavaScript avec Node ;
+- création de compte ;
+- achat d'un hub ;
+- leasing d'un avion ;
+- personnalisation de livrée ;
+- amélioration Wi-Fi ;
+- recrutement ;
+- création de route ;
+- tarification ;
+- campagne marketing ;
+- emprunt ;
+- partenariat ;
+- construction d'hôtel ;
+- lecture finance / état / hub.
 
-## Limite technique importante
-
-Cette v0.4 est une version Web très interactive. Elle apporte un vrai satellite navigable, un globe 3D, des mouvements et une vue cockpit dynamique.
-
-Pour atteindre ensuite un rendu équivalent à un simulateur AAA avec :
-- modèles d’aéroports en 3D photoréalistes ;
-- bâtiments réellement volumétriques ;
-- cockpits Airbus/Boeing modélisés ;
-- avions 3D fidèles ;
-- nuages volumétriques ;
-- éclairage physique ;
-- véhicules 3D ;
-- taxi exact sur toutes les voies avec animations complexes ;
-
-le client final devra passer sur Unreal Engine 5 tout en conservant ce backend de comptes, flotte, économie, hubs et OPS.

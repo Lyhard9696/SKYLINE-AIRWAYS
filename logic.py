@@ -1,7 +1,7 @@
 import math
 from datetime import datetime, timezone
 
-SIM_SPEED = 120.0  # simulated seconds per real second (6 simulated minutes per real second)
+SIM_SPEED = 3.0  # 1 seconde réelle = 3 secondes simulées : un vol dure environ 33% du temps réel
 
 # Upgrade positions are bearings/distances around the actual airport reference point.
 # This keeps the layer spatially coherent for every real airport while the satellite
@@ -128,32 +128,31 @@ def hub_level(levels):
     return min(50, 1 + int(math.sqrt(score) * 2.55))
 
 
-def route_simulation(route_created_at, origin, destination, aircraft_spec):
+def route_timeline(origin, destination, aircraft_spec):
     distance_km = haversine_km(origin['lat'],origin['lon'],destination['lat'],destination['lon'])
     cruise_kmh = max(180, aircraft_spec['cruise_kts'] * 1.852)
     airborne_min = max(18, (distance_km / cruise_kmh) * 60 + 10)
-
-    # Fully repeating aircraft rotation. Same physical aircraft goes out and returns.
     phases = [
-        ('turnaround_origin', 32),
-        ('pushback_origin', 4),
-        ('taxi_out_origin', 11),
-        ('outbound', airborne_min),
-        ('taxi_in_destination', 9),
-        ('turnaround_destination', 38),
-        ('pushback_destination', 4),
-        ('taxi_out_destination', 11),
-        ('inbound', airborne_min),
-        ('taxi_in_origin', 9),
+        ('cleaning_origin', 12), ('catering_origin', 8), ('refueling_origin', 14), ('boarding_origin', 24),
+        ('pushback_origin', 4), ('taxi_out_origin', 12), ('outbound', airborne_min), ('taxi_in_destination', 10),
+        ('deboarding_destination', 8), ('cleaning_destination', 12), ('catering_destination', 8), ('refueling_destination', 14),
+        ('boarding_destination', 24), ('pushback_destination', 4), ('taxi_out_destination', 12), ('inbound', airborne_min),
+        ('taxi_in_origin', 10), ('deboarding_origin', 8),
     ]
+    return distance_km, airborne_min, phases
+
+
+def route_simulation(route_created_at, origin, destination, aircraft_spec):
+    distance_km, airborne_min, phases = route_timeline(origin,destination,aircraft_spec)
     cycle=sum(x[1] for x in phases)
     created=route_created_at
     if created.tzinfo is None:
         created=created.replace(tzinfo=timezone.utc)
     elapsed_real=max(0,(now_utc()-created).total_seconds())
-    elapsed_sim=(elapsed_real*SIM_SPEED/60.0)%cycle
+    elapsed_sim_total=elapsed_real*SIM_SPEED/60.0
+    elapsed_sim=elapsed_sim_total%cycle
     cursor=0
-    phase='turnaround_origin'; phase_p=0
+    phase=phases[0][0]; phase_p=0
     for name,dur in phases:
         if elapsed_sim < cursor+dur:
             phase=name; phase_p=(elapsed_sim-cursor)/dur if dur else 0
@@ -183,29 +182,51 @@ def route_simulation(route_created_at, origin, destination, aircraft_spec):
         altitude_ft=int(max(2500, alt_factor * min(41000, aircraft_spec.get('service_ceiling') or 39000)))
         speed_kts=int(aircraft_spec['cruise_kts'] * (0.68 if phase_p<0.12 or phase_p>0.88 else 1.0))
     elif 'taxi' in phase or 'pushback' in phase:
-        altitude_ft=0; speed_kts=7 if 'pushback' in phase else 18
+        altitude_ft=0; speed_kts=4 if 'pushback' in phase else 16
     else:
         altitude_ft=0; speed_kts=0
 
-    # Fuel resets for each leg; purely operational indicator, not certified dispatch math.
-    if phase=='outbound': fuel=max(12,int(100-phase_p*72))
-    elif phase=='inbound': fuel=max(12,int(100-phase_p*72))
-    elif 'destination' in phase: fuel=100
+    if phase in ('outbound','inbound'): fuel=max(12,int(100-phase_p*72))
+    elif 'refueling' in phase: fuel=int(30+phase_p*70)
     else: fuel=100
 
     labels={
-        'turnaround_origin':'À la porte', 'pushback_origin':'Pushback', 'taxi_out_origin':'Roulage départ',
-        'outbound':'En vol', 'taxi_in_destination':'Roulage arrivée', 'turnaround_destination':'Escale / turnaround',
-        'pushback_destination':'Pushback retour', 'taxi_out_destination':'Roulage retour', 'inbound':'En vol retour',
-        'taxi_in_origin':'Roulage vers la porte'
+        'cleaning_origin':'Nettoyage cabine','catering_origin':'Catering','refueling_origin':'Ravitaillement',
+        'boarding_origin':'Embarquement','pushback_origin':'Pushback','taxi_out_origin':'Roulage départ','outbound':'En vol',
+        'taxi_in_destination':'Roulage arrivée','deboarding_destination':'Débarquement','cleaning_destination':'Nettoyage cabine',
+        'catering_destination':'Catering','refueling_destination':'Ravitaillement','boarding_destination':'Embarquement retour',
+        'pushback_destination':'Pushback retour','taxi_out_destination':'Roulage retour','inbound':'En vol retour',
+        'taxi_in_origin':'Roulage vers la porte','deboarding_origin':'Débarquement'
     }
+    ground_service=None
+    if 'cleaning' in phase: ground_service='cleaning'
+    elif 'catering' in phase: ground_service='catering'
+    elif 'refueling' in phase: ground_service='fuel'
+    elif 'boarding' in phase or 'deboarding' in phase: ground_service='passenger'
+    elif 'pushback' in phase: ground_service='pushback'
+    elif 'taxi' in phase: ground_service='taxi'
     return {
         'phase':phase,'status':labels[phase],'phase_progress':round(phase_p,4),'airborne':airborne,
         'direction':direction,'lat':lat,'lon':lon,'heading':heading,'altitude_ft':altitude_ft,'speed_kts':speed_kts,
         'fuel_percent':fuel,'distance_km':int(round(distance_km)),'airborne_minutes':int(round(airborne_min)),
-        'cycle_minutes':int(round(cycle)),'from':frm['code'],'to':to['code'],
+        'cycle_minutes':int(round(cycle)),'from':frm['code'],'to':to['code'],'ground_service':ground_service,
+        'elapsed_sim_minutes_total':elapsed_sim_total,
     }
 
+
+def completed_leg_count(route_created_at, origin, destination, aircraft_spec):
+    _, _, phases = route_timeline(origin,destination,aircraft_spec)
+    cycle=sum(x[1] for x in phases)
+    created=route_created_at if route_created_at.tzinfo else route_created_at.replace(tzinfo=timezone.utc)
+    elapsed=max(0,(now_utc()-created).total_seconds())*SIM_SPEED/60.0
+    cycle_count=int(elapsed//cycle)
+    within=elapsed%cycle
+    outbound_end=sum(d for n,d in phases[:7])
+    inbound_end=sum(d for n,d in phases[:16])
+    legs=cycle_count*2
+    if within>=outbound_end: legs+=1
+    if within>=inbound_end: legs+=1
+    return legs
 
 def economy_per_leg(origin, destination, spec, reputation=50):
     d=haversine_km(origin['lat'],origin['lon'],destination['lat'],destination['lon'])
@@ -222,3 +243,40 @@ def economy_per_leg(origin, destination, spec, reputation=50):
     cost=fuel_cost+fees+crew
     profit=max(-50_000,revenue-cost)
     return {'load_factor':round(load,3),'passengers':int(round(pax)),'fare':round(fare,2),'revenue':round(revenue,2),'cost':round(cost,2),'profit':round(profit,2)}
+
+
+def aircraft_service_score(service):
+    if not service:return 0
+    vals=[service.get(k,0) if isinstance(service,dict) else getattr(service,k,0) for k in ('wifi','meals','entertainment','comfort','cabin_service','cleaning')]
+    return sum(vals)/(len(vals)*10) if vals else 0
+
+
+def economy_detailed(origin,destination,spec,reputation=50,settings=None,service=None,marketing_boost=0,partner_bonus=0,staff_cost_factor=1.0):
+    d=haversine_km(origin['lat'],origin['lon'],destination['lat'],destination['lon'])
+    seats=max(1,spec['seats'])
+    market=55+d*0.095
+    settings=settings or {}
+    eco=float(settings.get('economy_price') or market)
+    prem=float(settings.get('premium_price') or market*1.55)
+    biz=float(settings.get('business_price') or market*2.75)
+    first=float(settings.get('first_price') or market*4.8)
+    baggage=float(settings.get('baggage_fee') or 0)
+    svc=aircraft_service_score(service)
+    price_factor=max(.38,min(1.32,(market/max(20,eco))**1.08))
+    rep_factor=.82+min(100,reputation)/100*.22
+    service_factor=.88+svc*.22
+    marketing_factor=1+min(.22,max(0,marketing_boost))
+    airport_factor=1.08 if destination.get('type')=='large_airport' else 1.0 if destination.get('type')=='medium_airport' else .76
+    load=max(.30,min(.97,.67*price_factor*rep_factor*service_factor*marketing_factor*airport_factor))
+    pax=int(round(seats*load))
+    longhaul=d>4500
+    shares={'economy':.76 if longhaul else .88,'premium':.11 if longhaul else .06,'business':.11 if longhaul else .055,'first':.02 if longhaul and seats>250 else .005}
+    total=sum(shares.values());shares={k:v/total for k,v in shares.items()}
+    revenue=pax*(shares['economy']*eco+shares['premium']*prem+shares['business']*biz+shares['first']*first)
+    ancillary=pax*(baggage*.28 + 4 + svc*12) + revenue*partner_bonus
+    fuel_cost=(d/1000)*max(900,(spec.get('mtow_kg') or 60000)/65)*.82
+    fees=1400+seats*8+(2800 if destination.get('type')=='large_airport' else 900)
+    crew=(900+d*.18)*staff_cost_factor
+    service_cost=pax*(2.5+svc*18)
+    cost=fuel_cost+fees+crew+service_cost
+    return {'load_factor':round(load,3),'passengers':pax,'market_fare':round(market,2),'average_fare':round(revenue/max(1,pax),2),'ticket_revenue':round(revenue,2),'ancillary_revenue':round(ancillary,2),'revenue':round(revenue+ancillary,2),'cost':round(cost,2),'profit':round(revenue+ancillary-cost,2),'service_score':round(svc,3)}

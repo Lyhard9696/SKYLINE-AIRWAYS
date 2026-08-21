@@ -78,3 +78,141 @@ class Route(Base):
     partner_aircraft: Mapped[str]=mapped_column(String(80),default='')
     frequency: Mapped[int]=mapped_column(Integer,default=1)
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class Employee(Base):
+    __tablename__='employees_v5'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    name: Mapped[str]=mapped_column(String(120))
+    role: Mapped[str]=mapped_column(String(48),index=True)
+    qualification: Mapped[str]=mapped_column(String(64),default='')
+    home_hub: Mapped[str]=mapped_column(String(16),default='')
+    salary_monthly: Mapped[float]=mapped_column(Float,default=0)
+    hiring_fee: Mapped[float]=mapped_column(Float,default=0)
+    quality: Mapped[int]=mapped_column(Integer,default=70)
+    fatigue: Mapped[float]=mapped_column(Float,default=0)
+    hired_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class RouteSettings(Base):
+    __tablename__='route_settings_v5'
+    route_id: Mapped[int]=mapped_column(ForeignKey('routes_v4.id'),primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    economy_price: Mapped[float]=mapped_column(Float,default=0)
+    premium_price: Mapped[float]=mapped_column(Float,default=0)
+    business_price: Mapped[float]=mapped_column(Float,default=0)
+    first_price: Mapped[float]=mapped_column(Float,default=0)
+    baggage_fee: Mapped[float]=mapped_column(Float,default=0)
+    overbooking_percent: Mapped[int]=mapped_column(Integer,default=3)
+
+class AircraftService(Base):
+    __tablename__='aircraft_services_v5'
+    aircraft_id: Mapped[int]=mapped_column(ForeignKey('aircraft_v4.id'),primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    wifi: Mapped[int]=mapped_column(Integer,default=0)
+    meals: Mapped[int]=mapped_column(Integer,default=0)
+    entertainment: Mapped[int]=mapped_column(Integer,default=0)
+    comfort: Mapped[int]=mapped_column(Integer,default=0)
+    cabin_service: Mapped[int]=mapped_column(Integer,default=0)
+    cleaning: Mapped[int]=mapped_column(Integer,default=0)
+
+class AircraftLiveryDetail(Base):
+    __tablename__='aircraft_livery_details_v5'
+    aircraft_id: Mapped[int]=mapped_column(ForeignKey('aircraft_v4.id'),primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    tail_color: Mapped[str]=mapped_column(String(16),default='#0b4b78')
+    engine_color: Mapped[str]=mapped_column(String(16),default='#0b4b78')
+    belly_color: Mapped[str]=mapped_column(String(16),default='#dce5ec')
+    nose_color: Mapped[str]=mapped_column(String(16),default='#f3f7fb')
+    stripe_style: Mapped[str]=mapped_column(String(32),default='swoosh')
+    logo_scale: Mapped[float]=mapped_column(Float,default=1.0)
+    logo_position: Mapped[float]=mapped_column(Float,default=0.35)
+
+class FlightRecord(Base):
+    __tablename__='flight_records_v5'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    route_id: Mapped[int]=mapped_column(ForeignKey('routes_v4.id'),index=True)
+    aircraft_id: Mapped[int]=mapped_column(ForeignKey('aircraft_v4.id'),index=True)
+    tail: Mapped[str]=mapped_column(String(24))
+    origin: Mapped[str]=mapped_column(String(16))
+    destination: Mapped[str]=mapped_column(String(16))
+    passengers: Mapped[int]=mapped_column(Integer,default=0)
+    load_factor: Mapped[float]=mapped_column(Float,default=0)
+    ticket_revenue: Mapped[float]=mapped_column(Float,default=0)
+    ancillary_revenue: Mapped[float]=mapped_column(Float,default=0)
+    operating_cost: Mapped[float]=mapped_column(Float,default=0)
+    profit: Mapped[float]=mapped_column(Float,default=0)
+    completed_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
+
+class RouteProgress(Base):
+    __tablename__='route_progress_v5'
+    route_id: Mapped[int]=mapped_column(ForeignKey('routes_v4.id'),primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    completed_legs: Mapped[int]=mapped_column(Integer,default=0)
+
+class FinanceTransaction(Base):
+    __tablename__='finance_transactions_v5'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    category: Mapped[str]=mapped_column(String(64),index=True)
+    label: Mapped[str]=mapped_column(String(180))
+    amount: Mapped[float]=mapped_column(Float,default=0)
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
+
+class Loan(Base):
+    __tablename__='loans_v5'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    principal: Mapped[float]=mapped_column(Float)
+    outstanding: Mapped[float]=mapped_column(Float)
+    apr: Mapped[float]=mapped_column(Float)
+    term_months: Mapped[int]=mapped_column(Integer)
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    last_accrued_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class MarketingCampaign(Base):
+    __tablename__='marketing_campaigns_v5'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    name: Mapped[str]=mapped_column(String(120))
+    campaign_type: Mapped[str]=mapped_column(String(64))
+    spend: Mapped[float]=mapped_column(Float)
+    impact: Mapped[float]=mapped_column(Float,default=0.05)
+    starts_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    ends_at: Mapped[datetime]=mapped_column(DateTime(timezone=True))
+
+class Partner(Base):
+    __tablename__='partners_v5'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    partner_type: Mapped[str]=mapped_column(String(48))
+    name: Mapped[str]=mapped_column(String(120))
+    sign_fee: Mapped[float]=mapped_column(Float,default=0)
+    revenue_bonus: Mapped[float]=mapped_column(Float,default=0)
+    reputation_bonus: Mapped[float]=mapped_column(Float,default=0)
+    signed_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class HotelProperty(Base):
+    __tablename__='hotel_properties_v5'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    airport_ident: Mapped[str]=mapped_column(String(16),index=True)
+    name: Mapped[str]=mapped_column(String(120))
+    rooms: Mapped[int]=mapped_column(Integer,default=120)
+    stars: Mapped[int]=mapped_column(Integer,default=3)
+    level: Mapped[int]=mapped_column(Integer,default=1)
+    built_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class HubAsset(Base):
+    __tablename__='hub_assets_v5'
+    __table_args__=(UniqueConstraint('user_id','airport_ident','asset_key',name='uq_v5_hub_asset'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    airport_ident: Mapped[str]=mapped_column(String(16),index=True)
+    asset_key: Mapped[str]=mapped_column(String(120),index=True)
+    kind: Mapped[str]=mapped_column(String(32))
+    name: Mapped[str]=mapped_column(String(80),default='')
+    lon: Mapped[float]=mapped_column(Float)
+    lat: Mapped[float]=mapped_column(Float)
+    purchase_price: Mapped[float]=mapped_column(Float,default=0)
+    purchased_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
