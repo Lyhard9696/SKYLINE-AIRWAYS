@@ -1,4 +1,5 @@
 import os, math, json, base64, hashlib, hmac, secrets, time, random
+from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -401,7 +402,7 @@ class HubAssetBuyReq(BaseModel):ident:str;asset_key:str;kind:str;name:str='';lon
 def api_airport_search(q:str='',limit:int=30):return search_airports(q,limit=limit)
 
 @app.get('/api/airports/major')
-def api_airports_major(limit:int=2200):return major_airports(limit)
+def api_airports_major(limit:int=900):return major_airports(min(limit,1200))
 
 @app.get('/api/airports/{ident}')
 def api_airport_detail(ident:str):
@@ -804,8 +805,22 @@ def api_state(request:Request):
                 'company':{'employees':employees,'marketing_boost':marketing,'active_campaigns':active_campaigns,'partner_bonus':pbonus}}
 
 # -------- Weather / live traffic --------
-_weather_cache={}
-_traffic_cache={}
+class BoundedCache(OrderedDict):
+    """Small LRU cache to keep the Render free instance inside its RAM budget."""
+    def __init__(self, maxsize):
+        super().__init__(); self.maxsize=max(1,int(maxsize))
+    def get(self,key,default=None):
+        if key not in self:return default
+        value=super().get(key)
+        self.move_to_end(key)
+        return value
+    def __setitem__(self,key,value):
+        if key in self:super().__delitem__(key)
+        super().__setitem__(key,value)
+        while len(self)>self.maxsize:self.popitem(last=False)
+
+_weather_cache=BoundedCache(96)
+_traffic_cache=BoundedCache(32)
 
 @app.get('/api/weather/current')
 def api_weather(lat:float,lon:float):
@@ -847,7 +862,7 @@ def api_live_traffic(ident:str):
 def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=300):
     # Prefer the official Flightradar24 API when the owner supplies a licensed API token.
     # Otherwise use OpenSky in the same display layer. No FR24 website scraping or map copying is performed.
-    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(20,min(600,limit))
+    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(20,min(180,limit))
     bucket=(round(lamin,1),round(lomin,1),round(lamax,1),round(lomax,1),limit);now=time.time();cached=_traffic_cache.get(('box',)+bucket)
     if cached and now-cached[0]<20:return cached[1]
     token=os.getenv('FR24_API_TOKEN','').strip()
@@ -874,7 +889,7 @@ def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:i
         out={'source':'unavailable','states':[],'licensed':False}
     _traffic_cache[('box',)+bucket]=(now,out);return out
 
-_surface_cache={}
+_surface_cache=BoundedCache(2)
 
 def _fallback_surface_network(a):
     features=[]
@@ -899,7 +914,7 @@ def api_surface_network(ident:str,request:Request):
     if not a:raise HTTPException(404,'Aéroport introuvable')
     now=time.time();cached=_surface_cache.get(a['ident'])
     if cached and now-cached[0] < 6*3600:return cached[1]
-    span={'large_airport':.060,'medium_airport':.045,'small_airport':.028,'heliport':.018}.get(a['type'],.03)
+    span={'large_airport':.050,'medium_airport':.040,'small_airport':.026,'heliport':.018}.get(a['type'],.03)
     south,west,north,east=a['lat']-span,a['lon']-span,a['lat']+span,a['lon']+span
     q=(
         '[out:json][timeout:8];('
@@ -933,7 +948,13 @@ def api_surface_network(ident:str,request:Request):
                 tags=e.get('tags') or {};kind=tags.get('aeroway')
                 if kind in ('gate','parking_position') and e.get('lon') is not None:
                     features.append({'type':'Feature','geometry':{'type':'Point','coordinates':[e['lon'],e['lat']]},'properties':{'kind':kind,'name':tags.get('ref') or tags.get('name') or '', 'source':'OpenStreetMap','asset_key':f'{kind}:{e.get("id")}' }})
-        if features:out={'type':'FeatureCollection','features':features,'source':'OpenStreetMap / Overpass'}
+        # Large airports can contain tens of thousands of OSM objects. Keep only
+        # the operational geometry needed by the game to avoid OOM on 512 MB instances.
+        if features:
+            priority={'runway':0,'taxiway':1,'gate':2,'parking_position':3,'apron':4}
+            features.sort(key=lambda f: priority.get((f.get('properties') or {}).get('kind'),9))
+            features=features[:1400]
+            out={'type':'FeatureCollection','features':features,'source':'OpenStreetMap / Overpass'}
     except Exception:
         out=None
     if not out:out=_fallback_surface_network(a)

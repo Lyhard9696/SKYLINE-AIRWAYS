@@ -22,3 +22,7 @@ services:
         generateValue: true
       - key: COOKIE_SECURE
         value: '1'
+      - key: PYTHONUNBUFFERED
+        value: '1'
+      - key: MALLOC_ARENA_MAX
+        value: '2'
