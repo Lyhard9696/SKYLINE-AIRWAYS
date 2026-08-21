@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"><meta name="theme-color" content="#06111d"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><title>SKYLINE AIRWAYS</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<link rel="manifest" href="/static/manifest.webmanifest"><link rel="stylesheet" href="/static/style.css"><link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+<div id="appShell">
+<header class="topbar"><div class="brand"><span class="brand-plane">✈</span><div><b id="companyName">SKYLINE</b><small>AIRWAYS</small></div></div><div class="topstats"><div><small>SOLDE</small><b id="cash">—</b></div><div><small>RÉPUTATION</small><b id="rep">—</b></div><div><small>HUB</small><b id="hubLevel">CDG</b></div></div><a class="logout" href="/logout">Quitter</a></header>
+<main class="game-main">
+<section class="view active" data-view="hub"><div class="section-head"><div><p class="eyebrow">PARIS CHARLES DE GAULLE</p><h1>Hub CDG vivant</h1><p class="muted">Déplace-toi, zoome et touche directement une zone pour l'acheter ou l'améliorer.</p></div><span class="pill" id="hubStage">NIVEAU 1</span></div><div class="hub-layout"><div id="hubMap"></div><aside class="side-panel" id="hubInspector"><div class="empty-state"><b>Sélectionne une zone</b><span>Les éléments gris sont verrouillés, orange disponibles, verts actifs.</span></div></aside></div><div class="legend-row"><span><i class="dot active-dot"></i> Actif</span><span><i class="dot avail-dot"></i> Disponible</span><span><i class="dot lock-dot"></i> Verrouillé</span></div></section>
+
+<section class="view" data-view="world"><div class="section-head"><div><p class="eyebrow">RÉSEAU MONDIAL</p><h1>Carte du monde</h1><p class="muted">Tes routes et tes avions bougent réellement dans la simulation accélérée.</p></div><span class="pill" id="flightCount">0 VOL</span></div><div id="worldMap"></div><div class="world-bottom"><div class="panel"><h2>Vols actifs</h2><div id="activeFlights" class="list"></div></div><div class="panel"><h2>Alertes OPS / NOTAM</h2><div id="notamList" class="list"></div></div></div></section>
+
+<section class="view" data-view="market"><div class="section-head"><div><p class="eyebrow">FLEET PROCUREMENT</p><h1>Acheter / louer un avion</h1><p class="muted">Ta flotte est vide au départ. Choisis les appareils qui correspondent à ton réseau.</p></div></div><div id="marketGrid" class="card-grid"></div></section>
+
+<section class="view" data-view="fleet"><div class="section-head"><div><p class="eyebrow">FLEET MANAGEMENT</p><h1>Ma flotte</h1></div><button class="secondary" data-go="market">+ Ajouter un avion</button></div><div id="fleetList" class="fleet-list"></div></section>
+
+<section class="view" data-view="routes"><div class="section-head"><div><p class="eyebrow">NETWORK PLANNING</p><h1>Lignes & affectations</h1><p class="muted">Une ligne nécessite un avion libre. L'IA vérifie autonomie et restrictions.</p></div></div><div class="routes-layout"><form class="panel route-form" id="routeForm"><h2>Créer une ligne depuis CDG</h2><label>Avion disponible<select id="routeAircraft" required></select></label><label>Destination<select id="routeDest" required></select></label><label>Fréquence cible<select id="routeFreq"><option value="1">1 rotation / jour</option><option value="2">2 rotations / jour</option><option value="3">3 rotations / jour</option></select></label><div id="routeCheck" class="route-check"></div><button class="primary" type="submit">Ouvrir la ligne</button></form><div class="panel"><h2>Lignes exploitées</h2><div id="routesList" class="list"></div></div></div></section>
+
+<section class="view" data-view="ops"><div class="section-head"><div><p class="eyebrow">OPERATIONS CONTROL</p><h1>Centre OPS</h1></div></div><div class="ops-grid"><article class="panel"><h2>Automatisation opérationnelle</h2><p class="muted">Le niveau du bâtiment OPS au hub augmente progressivement la capacité de gestion des perturbations.</p><div class="ops-stat"><span>NOTAM & fermetures</span><b>Surveillance active</b></div><div class="ops-stat"><span>Alternates</span><b>Automatique</b></div><div class="ops-stat"><span>Fatigue équipage</span><b>Prévu module suivant</b></div></article><article class="panel"><h2>Restrictions réseau</h2><div class="restriction danger"><b>CDG → SVO</b><span>Indisponible dans le scénario opérationnel.</span></div><div class="restriction warning"><b>CDG → IKA</b><span>Direct indisponible ; itinéraire via IST proposé.</span></div></article></div></section>
+</main>
+<nav class="bottom-nav"><button class="active" data-nav="hub"><span>⌂</span>Hub</button><button data-nav="world"><span>◎</span>Monde</button><button data-nav="market"><span>＋</span>Acheter</button><button data-nav="fleet"><span>✈</span>Flotte</button><button data-nav="routes"><span>⌁</span>Lignes</button><button data-nav="ops"><span>◈</span>OPS</button></nav>
+</div>
+
+<div id="cockpitModal" class="modal"><div class="cockpit-shell"><button class="modal-close" id="closeCockpit">×</button><img src="/static/assets/cockpit.png" alt="Vue cockpit"><div class="cockpit-hud"><div><small>VOL</small><b id="cpFlight">—</b></div><div><small>ALTITUDE</small><b id="cpAlt">—</b></div><div><small>VITESSE</small><b id="cpSpeed">—</b></div><div><small>CARBURANT</small><b id="cpFuel">—</b></div><div><small>ETA</small><b id="cpEta">—</b></div></div><div class="cockpit-bottom"><b id="cpAircraft">—</b><span id="cpStatus">—</span></div></div></div>
+<div id="toast" class="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script><script src="/static/game.js"></script>
+</body></html>
