@@ -1,8 +1,8 @@
 databases:
   - name: skyline-db
-    plan: free
     databaseName: skyline
     user: skyline
+    plan: free
 
 services:
   - type: web
