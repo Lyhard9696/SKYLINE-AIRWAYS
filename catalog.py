@@ -333,7 +333,6 @@ def _specialize(spec):
     # Only use a photograph when its airframe family is known. A wrong photo is
     # worse than an explicit "photo non disponible" state.
     verified={
-        'A359':'/static/aircraft/real/a350.jpg','A35K':'/static/aircraft/real/a350.jpg',
         'A21N':'/static/aircraft/real/a321neo.jpg',
         'B38M':'/static/aircraft/real/b737max8.jpg','B37M':'/static/aircraft/real/b737max8.jpg',
         'B39M':'/static/aircraft/real/b737max8.jpg','B3JM':'/static/aircraft/real/b737max8.jpg',

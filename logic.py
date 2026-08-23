@@ -251,7 +251,7 @@ def aircraft_service_score(service):
     return sum(vals)/(len(vals)*10) if vals else 0
 
 
-def economy_detailed(origin,destination,spec,reputation=50,settings=None,service=None,marketing_boost=0,partner_bonus=0,staff_cost_factor=1.0,technology_factor=1.0):
+def economy_detailed(origin,destination,spec,reputation=50,settings=None,service=None,marketing_boost=0,partner_bonus=0,staff_cost_factor=1.0,technology_factor=1.0,maintenance_factor=1.0,demand_bonus=0.0):
     d=haversine_km(origin['lat'],origin['lon'],destination['lat'],destination['lon'])
     seats=max(1,spec['seats'])
     market=55+d*0.095
@@ -267,7 +267,8 @@ def economy_detailed(origin,destination,spec,reputation=50,settings=None,service
     service_factor=.88+svc*.22
     marketing_factor=1+min(.22,max(0,marketing_boost))
     airport_factor=1.08 if destination.get('type')=='large_airport' else 1.0 if destination.get('type')=='medium_airport' else .76
-    load=max(.30,min(.97,.67*price_factor*rep_factor*service_factor*marketing_factor*airport_factor))
+    demand_factor=1+max(-.20,min(.20,float(demand_bonus or 0)))
+    load=max(.30,min(.97,.67*price_factor*rep_factor*service_factor*marketing_factor*airport_factor*demand_factor))
     pax=int(round(seats*load))
     longhaul=d>4500
     shares={'economy':.76 if longhaul else .88,'premium':.11 if longhaul else .06,'business':.11 if longhaul else .055,'first':.02 if longhaul and seats>250 else .005}
@@ -275,8 +276,13 @@ def economy_detailed(origin,destination,spec,reputation=50,settings=None,service
     revenue=pax*(shares['economy']*eco+shares['premium']*prem+shares['business']*biz+shares['first']*first)
     ancillary=pax*(baggage*.28 + 4 + svc*12) + revenue*partner_bonus
     fuel_cost=(d/1000)*max(900,(spec.get('mtow_kg') or 60000)/65)*.82*max(.72,min(1.0,technology_factor))
-    fees=1400+seats*8+(2800 if destination.get('type')=='large_airport' else 900)
+    fee_pool=1400+seats*8+(2800 if destination.get('type')=='large_airport' else 900)
+    # Keep baseline economics unchanged: 25% of the previous generic fee pool is now
+    # identified as a maintenance reserve so alliance/R&D maintenance bonuses can act on it.
+    maintenance_base=fee_pool*.25
+    fees=fee_pool-maintenance_base
+    maintenance_cost=maintenance_base*max(.55,min(1.25,float(maintenance_factor or 1.0)))
     crew=(900+d*.18)*staff_cost_factor
     service_cost=pax*(2.5+svc*18)
-    cost=fuel_cost+fees+crew+service_cost
-    return {'load_factor':round(load,3),'passengers':pax,'market_fare':round(market,2),'average_fare':round(revenue/max(1,pax),2),'ticket_revenue':round(revenue,2),'ancillary_revenue':round(ancillary,2),'revenue':round(revenue+ancillary,2),'cost':round(cost,2),'profit':round(revenue+ancillary-cost,2),'service_score':round(svc,3)}
+    cost=fuel_cost+fees+maintenance_cost+crew+service_cost
+    return {'load_factor':round(load,3),'passengers':pax,'market_fare':round(market,2),'average_fare':round(revenue/max(1,pax),2),'ticket_revenue':round(revenue,2),'ancillary_revenue':round(ancillary,2),'revenue':round(revenue+ancillary,2),'cost':round(cost,2),'profit':round(revenue+ancillary-cost,2),'service_score':round(svc,3),'cost_breakdown':{'fuel':round(fuel_cost,2),'airport_fees':round(fees,2),'maintenance':round(maintenance_cost,2),'crew':round(crew,2),'service':round(service_cost,2)}}

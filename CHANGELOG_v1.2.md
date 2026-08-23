@@ -1,0 +1,24 @@
+# SKYLINE AIRWAYS v1.2 — Live World, Alliances & Eras
+
+- Replaced the 220-aircraft world-seed display with a tiled global FR24 snapshot endpoint.
+- Removed the 180-position server cap from FR24 fetches; endpoint limit can reach 20,000 per tile/view.
+- Preserved both airborne and ground-tracked aircraft; no airborne/ground filtering in the global response.
+- Replaced thousands of DOM traffic markers with MapLibre GeoJSON/GPU layers.
+- Added world traffic counters: total / airborne / ground / partial coverage.
+- FR24 local diagnostic now clearly says it is a local hub test and reports airborne separately.
+- Added `painted_as`, `operating_as`, hex, ETA, vertical speed and livery identity to normalized FR24 records.
+- Added dynamic airline-name resolution and a major worldwide airline seed.
+- Added exact live-aircraft photo lookup by registration/hex with lazy loading and cache.
+- Removed misleading generic A350 airline photo from normal type-photo resolution.
+- Added AviationWeather.gov METAR and TAF endpoints.
+- Replaced technical NOTAM provider copy with a clean unavailable state; no fake operational NOTAMs.
+- Added five playable eras whose modifiers affect real economy calculations.
+- Added player-alliance levels 1–10 and real fuel/training/maintenance/aircraft/route/demand bonuses.
+- Added airline-alliance economic bonuses.
+- Added weekly collective alliance objectives and claimable XP/treasury rewards.
+- Added alliance world network map, hubs/routes/connections filters and member metrics.
+- Added tracking of alliance savings for route opening, recruitment/training, aircraft acquisitions and operating savings.
+- Added real route-opening costs so route-creation discounts have a concrete economic effect.
+- Applied training bonuses to manual and automatic recruitment.
+- Added GZip compression for large live-world JSON payloads.
+- Bumped service worker/browser build to v1.2.
