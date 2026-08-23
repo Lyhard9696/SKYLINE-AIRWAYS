@@ -48,19 +48,6 @@ class HubUpgrade(Base):
     code: Mapped[str]=mapped_column(String(64),index=True)
     level: Mapped[int]=mapped_column(Integer,default=0)
 
-
-class HubConstruction(Base):
-    __tablename__='hub_constructions_v132'
-    __table_args__=(UniqueConstraint('user_id','airport_ident','code',name='uq_v132_hub_construction'),)
-    id: Mapped[int]=mapped_column(Integer,primary_key=True)
-    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
-    airport_ident: Mapped[str]=mapped_column(String(16),index=True)
-    code: Mapped[str]=mapped_column(String(64),index=True)
-    target_level: Mapped[int]=mapped_column(Integer,default=1)
-    price: Mapped[float]=mapped_column(Float,default=0)
-    started_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
-    completes_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc)+timedelta(minutes=5))
-
 class Aircraft(Base):
     __tablename__='aircraft_v4'
     id: Mapped[int]=mapped_column(Integer,primary_key=True)
@@ -359,18 +346,6 @@ class AllianceGoalClaim(Base):
     xp_reward: Mapped[int]=mapped_column(Integer,default=0)
     cash_reward: Mapped[float]=mapped_column(Float,default=0)
     claimed_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
-
-
-class AllianceUpgrade(Base):
-    __tablename__='alliance_upgrades_v13'
-    __table_args__=(UniqueConstraint('alliance_id','code',name='uq_v13_alliance_upgrade'),)
-    id: Mapped[int]=mapped_column(Integer,primary_key=True)
-    alliance_id: Mapped[int]=mapped_column(ForeignKey('player_alliances_v11.id'),index=True)
-    code: Mapped[str]=mapped_column(String(64),index=True)
-    level: Mapped[int]=mapped_column(Integer,default=0)
-    invested: Mapped[float]=mapped_column(Float,default=0)
-    updated_by_user_id: Mapped[int | None]=mapped_column(ForeignKey('users.id'),nullable=True,index=True)
-    updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
 
 
 class HRPolicy(Base):

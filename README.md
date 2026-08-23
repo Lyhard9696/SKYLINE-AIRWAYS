@@ -1,92 +1,130 @@
-# SKYLINE AIRWAYS — v1.3.4 Premium Operations
+# SKYLINE AIRWAYS — v1.2 Live World
 
-Build FastAPI/SQLAlchemy/MapLibre du projet SKYLINE AIRWAYS, optimisée pour Render 512 Mo et l’interface premium des maquettes validées.
+Version basée directement sur le projet SKYLINE AIRWAYS v1.1 fourni par le propriétaire du projet.
 
-## v1.3.3
+## Principales évolutions v1.2
 
-- **Globe FR24 mémoire-safe** : aucun snapshot mondial de positions au démarrage ; compteur/agrégation à faible zoom, puis positions de la zone visible seulement.
-- **Avions au sol cliquables** : détail FR24 ciblé au clic avec fallback live local, plus photo par immatriculation/hex lorsqu’elle est disponible.
-- **Hub hiérarchique** : grandes zones sur la carte puis sous-améliorations au clic. Gris = verrouillé, jaune = déblocable, orange = travaux, vert = opérationnel.
-- **Mobilité contextuelle** : les transports et partenaires dépendent réellement de l’aéroport (ex. CDG peut proposer TGV/RER ; un aéroport régional sans métro n’en propose pas).
-- **Marques/photos fiables** : constructeurs, compagnies et partenaires utilisent les assets fournis seulement lorsqu’ils correspondent au contexte.
-- **Accueil nettoyé** : les visuels Duty Free, lounges, PAF, transports, etc. sont réservés aux améliorations du hub.
-- **Special Ops** : choix du pays, carte nationale interactive et achat de bases spécialisées sur la carte.
-- NOTAM/SIGMET ciblés de v1.3.1 conservés.
+### Globe FR24 mondial
+- Le diagnostic FR24 local reste un petit test autour du hub, mais il est maintenant explicitement marqué comme tel.
+- Le Globe utilise `/api/live-traffic/world` à faible zoom.
+- Le backend découpe le monde en 12 zones FR24, fusionne les résultats et déduplique par `fr24_id`.
+- Aucun filtre ne supprime les avions au sol ou les avions en vol : tous les enregistrements live récupérés sont conservés.
+- Les compteurs distinguent `positions`, `en vol` et `sol`.
+- À fort zoom, le Globe repasse sur `/api/live-traffic/box` avec une limite jusqu'à 20 000 positions.
+- Le rendu mondial utilise une source GeoJSON MapLibre et des couches GPU au lieu de créer des milliers de marqueurs DOM.
+- Le snapshot mondial est partagé en mémoire entre les joueurs et compressé via GZip.
 
-Voir `CHANGELOG_v1.3.3.md` et `FR24_SETUP_v1.3.2.md`.
-
-## v1.3.1
-
-- NOTAM : **FAA NOTAM Search public**, sans compte et sans clé API.
-- Le jeu n'affiche plus un mur de NOTAM mondial : il surveille uniquement les hubs possédés et les aéroports réellement utilisés comme départ, arrivée ou escale.
-- Les restrictions d'espace aérien à fort impact sont priorisées seulement lorsqu'une route du joueur traverse la zone surveillée. Le texte et la sévérité proviennent des NOTAM live ; Skyline n'invente pas une fermeture.
-- Météo aviation : METAR/TAF et SIGMET mondiaux via **AviationWeather.gov**, sans clé. Les SIGMET sont filtrés contre les corridors des routes du joueur.
-- Météo générale : Open-Meteo avec MET Norway en secours.
-- Globe : seuls les risques pertinents pour la compagnie sont ajoutés à la carte OPS.
-- FR24 : snapshot mondial tuilé, en vol + au sol, avec distinction entre trafic suivi par FR24 et positions réellement livrées par le plan API.
-- Le reste de v1.3 est conservé : hubs verrouillés par niveau/argent, alliances avec avantages communs, R&D/ères, opérations spécialisées, catalogue et fiches aéronef.
-
-## Déploiement Render
+Variables Render :
 
 ```text
-Build: pip install -r requirements.txt
-Start: uvicorn main:app --host 0.0.0.0 --port $PORT
-Health: /health
+FR24_API_TOKEN=<token production>
+FR24_API_BASE_URL=https://fr24api.flightradar24.com/api
+FR24_WORLD_CACHE_SECONDS=120
+FR24_WORLD_TILE_LIMIT=20000
+FR24_WORLD_WORKERS=3
 ```
 
-Variables principales :
+`FR24_API_TOKEN` reste exclusivement côté serveur.
+
+> Important : une couverture mondiale FR24 consomme beaucoup plus de crédits qu'une petite bounding box. Augmenter `FR24_WORLD_CACHE_SECONDS` réduit fortement la consommation si nécessaire.
+
+### Identification compagnie / livrée
+Pour le trafic réel, SKYLINE ne choisit plus une compagnie à partir du type d'avion.
+
+Ordre :
+1. `painted_as` — livrée réellement portée ;
+2. `operating_as` — opérateur ;
+3. aucune supposition si les données sont absentes.
+
+La fiche d'un vol réel affiche séparément **Livrée** et **Opéré par**. Les grandes compagnies sont résolues depuis un cache interne et les autres peuvent être résolues via l'endpoint statique FR24.
+
+### Photos du trafic réel
+- Recherche uniquement au clic sur un avion.
+- Recherche par immatriculation puis hex via le proxy backend Planespotters.
+- Cache positif 24 h / négatif 6 h.
+- Si aucune photo exacte n'est trouvée, pas de photo d'une autre compagnie.
+- Deux fallbacks locaux sont explicitement liés à la bonne combinaison type/livrée : A350 Air France (`AFR`) et A350 Air China (`CCA`).
+- L'A350 générique du catalogue n'utilise plus une photo de compagnie comme s'il s'agissait d'une photo neutre.
+
+### METAR / TAF
+Nouveaux endpoints serveur :
 
 ```text
-DATABASE_URL=<PostgreSQL Render>
-SECRET_KEY=<secret>
-FR24_API_TOKEN=<token FR24 production>
+GET /api/aviation/metar?icao=LFPG
+GET /api/aviation/taf?icao=LFPG
 ```
 
-Aucune clé NOTAM, METAR, TAF ou SIGMET n'est nécessaire. Options de cache :
+Source : AviationWeather.gov. Open-Meteo reste utilisé pour les conditions météo générales/cockpit.
+
+### NOTAM
+Aucun faux NOTAM n'est généré. Tant qu'aucun fournisseur opérationnel n'est branché :
 
 ```text
-OPS_NOTAM_CACHE_SECONDS=600
-OPS_SIGMET_CACHE_SECONDS=180
-OPS_WATCH_FIRS=
+NOTAM : données temps réel temporairement indisponibles.
 ```
 
-`OPS_WATCH_FIRS` est facultatif et permet d'ajouter d'autres FIR à la veille prioritaire, séparées par des virgules.
+Endpoint : `/api/aviation/notam/status`.
 
-## Endpoints aviation
+### Prochaines ères
+Les ères sont désormais une vraie progression calculée depuis le niveau de carrière et les niveaux R&D :
+1. Optimisation moderne
+2. Transition énergétique
+3. Aviation ultra-efficiente
+4. Nouvelles propulsions régionales
+5. Réseau intelligent
+
+Les bonus des ères sont appliqués au moteur économique : carburant, maintenance, achat avion, création de ligne, formation et demande selon l'ère.
+
+### Alliances
+Les alliances de joueurs gardent les données v1.1 existantes et ajoutent :
+- niveaux 1 à 10 ;
+- bonus carburant, formation, maintenance, achat/leasing et ouverture de lignes ;
+- bonus de demande/correspondance ;
+- XP gagné grâce aux vols et contributions ;
+- objectifs collectifs hebdomadaires ;
+- économies réellement suivies ;
+- contribution par membre ;
+- passagers 30 jours et lignes par membre ;
+- réseau mondial de hubs/lignes avec filtres ;
+- connexions entre hubs membres ;
+- activité des économies ;
+- chat existant conservé.
+
+Les alliances aériennes SkyTeam, Star Alliance et oneworld possèdent également des bonus économiques réels.
+
+### Frais de création de ligne
+L'ouverture d'une nouvelle route possède maintenant un coût calculé à partir de la distance et de l'appareil. Les réductions d'alliance/ère sont appliquées réellement et le gain d'alliance est journalisé.
+
+## Installation GitHub / Render
+
+Décompresser le ZIP puis placer son **contenu** à la racine du dépôt GitHub :
 
 ```text
-/api/aviation/metar?icao=LFPG
-/api/aviation/taf?icao=LFPG
-/api/aviation/notams?icao=LFPG
-/api/aviation/notam/status
-/api/ops/intelligence
+main.py
+models.py
+logic.py
+catalog.py
+requirements.txt
+render.yaml
+data/
+static/
+templates/
 ```
 
-`/api/ops/intelligence` renvoie uniquement les alertes utiles au réseau du joueur : hubs, départs/arrivées, météo sévère et restrictions croisant ses propres rotations.
+Render peut ensuite redéployer automatiquement.
 
-## Tests
+La base locale `skyline.db` du projet transmis n'est volontairement **pas incluse** dans le ZIP GitHub : elle peut contenir des comptes/progressions locales et Render utilise PostgreSQL. Les nouvelles tables v1.2 sont créées automatiquement par SQLAlchemy au démarrage.
 
-```bash
-python -m py_compile main.py models.py logic.py catalog.py
-node --check static/game-v131.js
-python tests/smoke_v13.py
-```
+## Tests effectués avant packaging
+- compilation Python de `main.py`, `models.py`, `logic.py`, `catalog.py` ;
+- validation syntaxique de `static/game-v120.js` avec Node ;
+- démarrage de FastAPI avec une base SQLite temporaire ;
+- création de compte et achat d'un hub ;
+- chargement état / R&D / alliances ;
+- création d'une alliance joueur ;
+- bonus de création de route effectivement appliqué et journalisé ;
+- test unitaire local de normalisation FR24 : avion en vol + avion au sol conservés ;
+- agrégateur mondial FR24 testé avec déduplication simulée.
 
-## Base de données
-
-`skyline.db` n'est volontairement pas livré : il peut contenir les comptes/progressions locaux. `data/catalog.sqlite` reste le catalogue aéronautique embarqué. Render utilise PostgreSQL.
-
-## Limites des sources
-
-FAA NOTAM Search est un service public de consultation et non une API développeur avec SLA. Skyline utilise donc un cache et un comportement de repli propre. AviationWeather.gov est la source publique pour METAR/TAF/SIGMET. Ces données sont destinées au gameplay et à l'immersion du simulateur, pas à la préparation d'un vol réel.
-
-
-## Hotfix v1.3.4
-Voir `CHANGELOG_v1.3.4.md` pour la correction du diagnostic FR24 mondial.
-
-
-## v1.3.6 — stabilité et bibliothèque visuelle
-- 591/591 types du catalogue possèdent une illustration locale légère sur fond blanc.
-- 2 000+ compagnies du catalogue sont résolues localement par code ICAO ; 100+ grandes compagnies disposent aussi d’un badge premium local.
-- Le Globe n’affiche plus de trafic fictif : uniquement FR24/OpenSky et la flotte du joueur.
-- Les détails d’un avion réel recherchent une photo par immatriculation/hex ; à défaut, le rendu du type est utilisé.
+## Données et droits
+Le projet contient des visuels et marques fournis avec le prototype. Avant une diffusion commerciale, vérifier les droits de marque, de logo, de livrée et de photographie. Les photos live obtenues depuis un fournisseur tiers doivent conserver l'attribution requise par ce fournisseur.

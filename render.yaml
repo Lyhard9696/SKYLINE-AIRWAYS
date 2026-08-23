@@ -10,7 +10,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --limit-concurrency 20 --backlog 64
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -26,23 +26,13 @@ services:
         value: '1'
       - key: MALLOC_ARENA_MAX
         value: '2'
-      - key: PYTHONMALLOC
-        value: 'malloc'
       - key: FR24_API_TOKEN
         sync: false
       - key: FR24_API_BASE_URL
         value: 'https://fr24api.flightradar24.com/api'
       - key: FR24_WORLD_CACHE_SECONDS
-        value: '45'
+        value: '120'
       - key: FR24_WORLD_TILE_LIMIT
-        value: '60'
+        value: '20000'
       - key: FR24_WORLD_WORKERS
-        value: '1'
-      - key: FR24_WORLD_DETAIL
-        value: 'light'
-      - key: FR24_COUNT_CACHE_SECONDS
-        value: '30'
-      - key: OPS_NOTAM_CACHE_SECONDS
-        value: '600'
-      - key: OPS_SIGMET_CACHE_SECONDS
-        value: '180'
+        value: '3'

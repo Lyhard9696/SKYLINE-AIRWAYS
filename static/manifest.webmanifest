@@ -1,21 +1,13 @@
 {
-  "name": "SKYLINE AIRWAYS — Premium Operations v1.3.3",
+  "name": "SKYLINE AIRWAYS — Premium Realism",
   "short_name": "SKYLINE",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#06111c",
-  "theme_color": "#06111c",
-  "description": "Simulation premium de compagnie aérienne : hubs, trafic mondial FR24, météo aviation, alliances, R&D, finance et opérations spéciales.",
+  "background_color": "#f7f8fa",
+  "theme_color": "#f7f8fa",
+  "description": "Simulation premium de compagnie aérienne : hubs réels, progression, équipages automatiques, globe OPS et finance géolocalisée.",
   "icons": [
-    {
-      "src": "/static/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/static/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
+    {"src":"/static/icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"/static/icon-512.png","sizes":"512x512","type":"image/png"}
   ]
 }
