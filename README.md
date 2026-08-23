@@ -1,324 +1,130 @@
-# Aviation Patch — FR24 monde + METAR/TAF + compagnies + alliances/ères
+# SKYLINE AIRWAYS — v1.2 Live World
 
-Ce dossier est un **patch autonome prêt à versionner dans GitHub**. Il ne contient aucune clé secrète.
+Version basée directement sur le projet SKYLINE AIRWAYS v1.1 fourni par le propriétaire du projet.
 
-Il fournit :
-- FR24 `live/flight-positions/full` côté serveur ;
-- mode **monde entier** par tuiles + déduplication `fr24_id` ;
-- aucune restriction aux avions au sol ;
-- compteurs `positions / en vol / sol estimé / inconnu` ;
-- mode `bounds` pour n'interroger que la vue du globe ;
-- cache serveur pour éviter une requête FR24 par joueur ;
-- livery : `painted_as` > `operating_as` > callsign > neutre ;
-- METAR/TAF via AviationWeather.gov côté serveur ;
-- photos avion paresseuses via Planespotters (optionnel) ;
-- seed de grandes compagnies mondiales + résolution FR24 dynamique ;
-- configurations "Prochaines ères" ;
-- niveaux/bonus d'alliance ;
-- moteur central de modificateurs économiques.
+## Principales évolutions v1.2
 
-## Quel dossier utiliser ?
+### Globe FR24 mondial
+- Le diagnostic FR24 local reste un petit test autour du hub, mais il est maintenant explicitement marqué comme tel.
+- Le Globe utilise `/api/live-traffic/world` à faible zoom.
+- Le backend découpe le monde en 12 zones FR24, fusionne les résultats et déduplique par `fr24_id`.
+- Aucun filtre ne supprime les avions au sol ou les avions en vol : tous les enregistrements live récupérés sont conservés.
+- Les compteurs distinguent `positions`, `en vol` et `sol`.
+- À fort zoom, le Globe repasse sur `/api/live-traffic/box` avec une limite jusqu'à 20 000 positions.
+- Le rendu mondial utilise une source GeoJSON MapLibre et des couches GPU au lieu de créer des milliers de marqueurs DOM.
+- Le snapshot mondial est partagé en mémoire entre les joueurs et compressé via GZip.
 
-Deux variantes backend sont incluses :
-
-- `node-service/` : Node 20 + Express — recommandé si ton projet est JS/TS/React/Vite/Next côté frontend.
-- `python-service/` : Python 3.11 + Flask — si ton backend actuel est Python.
-
-**N'en déploie qu'une seule.**
-
-Le dossier `frontend-integration/` contient un client JS utilisable avec les deux backends.
-
----
-
-## Render — variables
-
-Dans **Render > Environment** :
+Variables Render :
 
 ```text
-FR24_API_TOKEN=<ton token production>
-FR24_WORLD_STRATEGY=tiles
-FR24_CACHE_SECONDS=15
-CORS_ORIGIN=https://ton-domaine.example
+FR24_API_TOKEN=<token production>
+FR24_API_BASE_URL=https://fr24api.flightradar24.com/api
+FR24_WORLD_CACHE_SECONDS=120
+FR24_WORLD_TILE_LIMIT=20000
+FR24_WORLD_WORKERS=3
 ```
 
-Ne mets jamais le token dans le frontend.
+`FR24_API_TOKEN` reste exclusivement côté serveur.
 
-### Important : token production
-Le service utilise par défaut :
+> Important : une couverture mondiale FR24 consomme beaucoup plus de crédits qu'une petite bounding box. Augmenter `FR24_WORLD_CACHE_SECONDS` réduit fortement la consommation si nécessaire.
 
-```text
-https://fr24api.flightradar24.com/api
-```
+### Identification compagnie / livrée
+Pour le trafic réel, SKYLINE ne choisit plus une compagnie à partir du type d'avion.
 
-et **pas le sandbox**.
+Ordre :
+1. `painted_as` — livrée réellement portée ;
+2. `operating_as` — opérateur ;
+3. aucune supposition si les données sont absentes.
 
-Si ton token est un token sandbox, FR24 renverra des données statiques/prédéfinies. Il faut un token API production pour voir le trafic réel.
+La fiche d'un vol réel affiche séparément **Livrée** et **Opéré par**. Les grandes compagnies sont résolues depuis un cache interne et les autres peuvent être résolues via l'endpoint statique FR24.
 
----
+### Photos du trafic réel
+- Recherche uniquement au clic sur un avion.
+- Recherche par immatriculation puis hex via le proxy backend Planespotters.
+- Cache positif 24 h / négatif 6 h.
+- Si aucune photo exacte n'est trouvée, pas de photo d'une autre compagnie.
+- Deux fallbacks locaux sont explicitement liés à la bonne combinaison type/livrée : A350 Air France (`AFR`) et A350 Air China (`CCA`).
+- L'A350 générique du catalogue n'utilise plus une photo de compagnie comme s'il s'agissait d'une photo neutre.
 
-# Pourquoi tu voyais "19 positions / 11 sol"
-
-Le patch ne filtre pas les avions au sol ni les avions en vol.
-
-Un petit nombre de positions vient généralement de :
-1. `bounds` trop petit ;
-2. `limit` trop faible ;
-3. token sandbox ;
-4. filtre accidentel (`airports`, `categories`, `altitude_ranges`, etc.) ;
-5. appel limité à un aéroport ou une zone.
-
-Le endpoint du patch :
-
-```text
-GET /api/fr24/live?scope=world
-```
-
-agrège des tuiles mondiales et déduplique les avions.
-
-Exemple de réponse :
-
-```json
-{
-  "ok": true,
-  "scope": "world",
-  "provider": "flightradar24",
-  "mode": "full",
-  "count": 16842,
-  "stats": {
-    "airborne": 15122,
-    "groundEstimated": 1504,
-    "unknown": 216
-  },
-  "data": []
-}
-```
-
-**Le compteur sol est une estimation d'affichage. Il ne sert jamais à filtrer les données.**
-
----
-
-# Mode conseillé pour le globe
-
-## Vue monde
-```text
-/api/fr24/live?scope=world
-```
-
-## Quand le joueur zoome
-```text
-/api/fr24/live?bounds=N,S,W,E
-```
-
-Cela permet :
-- d'afficher l'ensemble mondial quand le globe est éloigné ;
-- de passer à des données ciblées quand on zoome ;
-- d'éviter de télécharger des dizaines de milliers d'objets toutes les quelques secondes.
-
----
-
-# Attention aux crédits FR24
-
-Le mode `tiles` vise la couverture mondiale et peut coûter beaucoup de crédits.
-
-Le cache est donc partagé côté serveur :
-- requêtes identiques réutilisées pendant `FR24_CACHE_SECONDS` ;
-- plusieurs joueurs ne provoquent pas chacun un nouveau balayage mondial.
-
-Pour réduire la consommation :
-```text
-FR24_WORLD_STRATEGY=single
-```
-
-`single` fait un seul appel monde avec `limit=20000`. C'est moins cher, mais si le résultat atteint exactement 20 000, il peut être plafonné. Le mode `tiles` est le mode prévu pour rechercher une couverture plus complète.
-
----
-
-# Frontend
-
-Copie/import le module :
-
-```text
-frontend-integration/aviation-live-client.js
-```
-
-Puis :
-
-```js
-import { AviationLiveClient } from "./aviation-live-client.js";
-
-const aviation = new AviationLiveClient({
-  apiBase: ""
-});
-
-const result = await aviation.getWorldFlights();
-
-console.log(result.count);
-console.log(result.stats.airborne);
-console.log(result.stats.groundEstimated);
-```
-
-Le statut à afficher peut être :
-
-```text
-Flightradar24 OK · full · 16842 positions · 15122 en vol · 1504 sol estimé
-```
-
-Ne plus afficher seulement :
-
-```text
-19 positions / 11 sol
-```
-
-sans donner le nombre d'avions en vol.
-
----
-
-# METAR / TAF
+### METAR / TAF
+Nouveaux endpoints serveur :
 
 ```text
 GET /api/aviation/metar?icao=LFPG
 GET /api/aviation/taf?icao=LFPG
 ```
 
-Open-Meteo peut rester pour la météo générale mais n'est plus utilisé comme source METAR/TAF.
+Source : AviationWeather.gov. Open-Meteo reste utilisé pour les conditions météo générales/cockpit.
 
----
-
-# Photos
-
-```text
-GET /api/aircraft/photo?reg=F-GZND&hex=...
-```
-
-À appeler uniquement quand le joueur sélectionne un avion.
-
-Si aucune photo n'existe, le frontend doit afficher un modèle/silhouette neutre — jamais la photo d'une autre compagnie.
-
----
-
-# Livrées
-
-Ordre strict :
+### NOTAM
+Aucun faux NOTAM n'est généré. Tant qu'aucun fournisseur opérationnel n'est branché :
 
 ```text
-painted_as
-operating_as
-préfixe callsign connu
-UNKNOWN
+NOTAM : données temps réel temporairement indisponibles.
 ```
 
-Donc :
-- `painted_as=AFR` => Air France ;
-- un `A350` sans compagnie fiable n'est **jamais** transformé en Air China simplement parce que c'est un A350.
+Endpoint : `/api/aviation/notam/status`.
 
----
+### Prochaines ères
+Les ères sont désormais une vraie progression calculée depuis le niveau de carrière et les niveaux R&D :
+1. Optimisation moderne
+2. Transition énergétique
+3. Aviation ultra-efficiente
+4. Nouvelles propulsions régionales
+5. Réseau intelligent
 
-# Prochaines ères
+Les bonus des ères sont appliqués au moteur économique : carburant, maintenance, achat avion, création de ligne, formation et demande selon l'ère.
 
-Données :
-```text
-shared/game/eras.json
-```
+### Alliances
+Les alliances de joueurs gardent les données v1.1 existantes et ajoutent :
+- niveaux 1 à 10 ;
+- bonus carburant, formation, maintenance, achat/leasing et ouverture de lignes ;
+- bonus de demande/correspondance ;
+- XP gagné grâce aux vols et contributions ;
+- objectifs collectifs hebdomadaires ;
+- économies réellement suivies ;
+- contribution par membre ;
+- passagers 30 jours et lignes par membre ;
+- réseau mondial de hubs/lignes avec filtres ;
+- connexions entre hubs membres ;
+- activité des économies ;
+- chat existant conservé.
 
-Endpoint :
-```text
-GET /api/game/eras
-```
+Les alliances aériennes SkyTeam, Star Alliance et oneworld possèdent également des bonus économiques réels.
 
-Les bonus sont exprimés sous forme de modificateurs économiques et doivent être branchés dans les coûts réels du jeu.
+### Frais de création de ligne
+L'ouverture d'une nouvelle route possède maintenant un coût calculé à partir de la distance et de l'appareil. Les réductions d'alliance/ère sont appliquées réellement et le gain d'alliance est journalisé.
 
----
+## Installation GitHub / Render
 
-# Alliances
-
-Données :
-```text
-shared/game/alliance-levels.json
-shared/game/alliance-goals.json
-```
-
-Endpoint :
-```text
-GET /api/game/alliance-levels
-GET /api/game/alliance-goals
-```
-
-Calcul générique :
-```text
-POST /api/game/effective-cost
-```
-
-Exemple :
-
-```json
-{
-  "base": 1000000,
-  "modifiers": [
-    {"category":"route_creation","mode":"percentage","value":-10}
-  ]
-}
-```
-
----
-
-# Tests rapides après déploiement
+Décompresser le ZIP puis placer son **contenu** à la racine du dépôt GitHub :
 
 ```text
-GET /health
-GET /api/fr24/live?scope=world
-GET /api/fr24/live?bounds=51.5,48.5,0.5,5.5
-GET /api/aviation/metar?icao=LFPG
-GET /api/aviation/taf?icao=LFPG
-GET /api/fr24/airline/AFR
-GET /api/game/eras
-GET /api/game/alliance-levels
+main.py
+models.py
+logic.py
+catalog.py
+requirements.txt
+render.yaml
+data/
+static/
+templates/
 ```
 
-Dans `/api/fr24/live?scope=world`, vérifie :
-- `count` est nettement supérieur à 19 avec un token production valide ;
-- `stats.airborne` existe ;
-- `stats.groundEstimated` n'est qu'une sous-partie ;
-- des avions avec `altitudeFt > 0` sont présents ;
-- `liveryCode` suit `painted_as`.
+Render peut ensuite redéployer automatiquement.
 
----
+La base locale `skyline.db` du projet transmis n'est volontairement **pas incluse** dans le ZIP GitHub : elle peut contenir des comptes/progressions locales et Render utilise PostgreSQL. Les nouvelles tables v1.2 sont créées automatiquement par SQLAlchemy au démarrage.
 
-# Déploiement Render — Node
+## Tests effectués avant packaging
+- compilation Python de `main.py`, `models.py`, `logic.py`, `catalog.py` ;
+- validation syntaxique de `static/game-v120.js` avec Node ;
+- démarrage de FastAPI avec une base SQLite temporaire ;
+- création de compte et achat d'un hub ;
+- chargement état / R&D / alliances ;
+- création d'une alliance joueur ;
+- bonus de création de route effectivement appliqué et journalisé ;
+- test unitaire local de normalisation FR24 : avion en vol + avion au sol conservés ;
+- agrégateur mondial FR24 testé avec déduplication simulée.
 
-Root directory :
-```text
-aviation_patch_github/node-service
-```
-
-Build command :
-```text
-npm install
-```
-
-Start command :
-```text
-npm start
-```
-
-# Déploiement Render — Python
-
-Root directory :
-```text
-aviation_patch_github/python-service
-```
-
-Build command :
-```text
-pip install -r requirements.txt
-```
-
-Start command :
-```text
-gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 60
-```
-
----
-
-# Limite importante
-
-Sans les fichiers de ton dépôt actuel, ce ZIP ne peut pas remplacer automatiquement les composants de ton interface déjà existante. Il fournit cependant le backend/API et la logique de jeu sous forme autonome et intégrable sans exposer le token.
+## Données et droits
+Le projet contient des visuels et marques fournis avec le prototype. Avant une diffusion commerciale, vérifier les droits de marque, de logo, de livrée et de photographie. Les photos live obtenues depuis un fournisseur tiers doivent conserver l'attribution requise par ce fournisseur.

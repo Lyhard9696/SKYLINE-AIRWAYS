@@ -1,12 +1,14 @@
-import os, math, json, base64, hashlib, hmac, secrets, time, random
+import os, math, json, base64, hashlib, hmac, secrets, time, random, threading
 from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from itsdangerous import URLSafeSerializer, BadSignature
@@ -16,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from models import (Base, User, CompanyProfile, UserHub, HubUpgrade, Aircraft, Route,
     Employee, RouteSettings, AircraftService, AircraftLiveryDetail, FlightRecord, RouteProgress,
     FinanceTransaction, Loan, MarketingCampaign, Partner, HotelProperty, HubAsset, DailyQuestClaim, BankLoanV6, SpecialBase, SpecialContract,
-    GameWallet, ShopEntitlement, AirlineAllianceMembership, PlayerAlliance, PlayerAllianceMember, AllianceMessage, CompanyResearch, HRPolicy, IPOState)
+    GameWallet, ShopEntitlement, AirlineAllianceMembership, PlayerAlliance, PlayerAllianceMember, AllianceMessage, CompanyResearch, HRPolicy, IPOState, AllianceBenefitLog, AllianceGoalClaim)
 from catalog import (
     search_airports, airport_detail, major_airports, search_aircraft, aircraft_detail,
     aircraft_manufacturers, search_airlines, longest_runway_m
@@ -37,7 +39,8 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='1.1.0')
+app=FastAPI(title='SKYLINE AIRWAYS',version='1.2.0')
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware('http')
 async def skyline_no_stale_code(request:Request, call_next):
@@ -265,11 +268,99 @@ RESEARCH_PROJECTS={
 def research_levels(db,user_id):
     return {x.code:x.level for x in db.scalars(select(CompanyResearch).where(CompanyResearch.user_id==user_id)).all()}
 
-def research_cost_factor(db,user_id,spec):
-    lv=research_levels(db,user_id);factor=1.0-(lv.get('fuel_efficiency',0)*.02)
+GAME_ERAS=[
+    {'id':'modern_optimization','order':1,'name':'Optimisation moderne','description':'Réseau, maintenance prédictive et automatisation des opérations.','min_level':1,'min_research':0,'bonuses':{'fuel':-1,'maintenance':-1}},
+    {'id':'energy_transition','order':2,'name':'Transition énergétique','description':'SAF, flotte efficiente et optimisation de la masse.','min_level':12,'min_research':3,'bonuses':{'fuel':-3,'maintenance':-2,'route_creation':-2}},
+    {'id':'ultra_efficient','order':3,'name':'Aviation ultra-efficiente','description':'Matériaux, moteurs et maintenance de nouvelle génération.','min_level':25,'min_research':8,'bonuses':{'fuel':-4,'maintenance':-5,'aircraft_purchase':-2}},
+    {'id':'regional_new_propulsion','order':4,'name':'Nouvelles propulsions régionales','description':'Hybride, électrique régional et nouvelles infrastructures.','min_level':40,'min_research':14,'bonuses':{'fuel':-5,'maintenance':-6,'aircraft_purchase':-3,'route_creation':-7}},
+    {'id':'intelligent_network','order':5,'name':'Réseau intelligent','description':'OPS assisté, hubs intelligents et coordination d’alliance avancée.','min_level':55,'min_research':20,'bonuses':{'fuel':-6,'maintenance':-8,'aircraft_purchase':-4,'route_creation':-10,'training':-5,'demand':3}},
+]
+
+PLAYER_ALLIANCE_LEVELS=[
+    {'level':1,'xp':0,'bonuses':{}},
+    {'level':2,'xp':500,'bonuses':{'training':-3}},
+    {'level':3,'xp':1500,'bonuses':{'training':-3,'route_creation':-5}},
+    {'level':4,'xp':3000,'bonuses':{'training':-3,'route_creation':-5,'fuel':-2}},
+    {'level':5,'xp':6000,'bonuses':{'training':-3,'route_creation':-5,'fuel':-2,'maintenance':-4}},
+    {'level':6,'xp':10000,'bonuses':{'training':-3,'route_creation':-5,'fuel':-2,'maintenance':-4,'aircraft_purchase':-2,'aircraft_lease':-1}},
+    {'level':7,'xp':16000,'bonuses':{'training':-3,'route_creation':-5,'fuel':-2,'maintenance':-4,'aircraft_purchase':-2,'aircraft_lease':-1,'demand':2}},
+    {'level':8,'xp':24000,'bonuses':{'training':-8,'route_creation':-5,'fuel':-4,'maintenance':-4,'aircraft_purchase':-2,'aircraft_lease':-1,'demand':2}},
+    {'level':9,'xp':34000,'bonuses':{'training':-8,'route_creation':-10,'fuel':-4,'maintenance':-7,'aircraft_purchase':-2,'aircraft_lease':-1,'demand':2}},
+    {'level':10,'xp':46000,'bonuses':{'training':-12,'route_creation':-15,'fuel':-7,'maintenance':-10,'aircraft_purchase':-5,'aircraft_lease':-3,'demand':3}},
+]
+
+ALLIANCE_WEEKLY_GOALS=[
+    {'code':'weekly_pax','name':'Transporter 250 000 passagers','metric':'passengers','target':250000,'xp_reward':1500,'cash_reward':250000},
+    {'code':'network_countries','name':'Desservir 8 pays','metric':'countries','target':8,'xp_reward':1200,'cash_reward':150000},
+    {'code':'network_routes','name':'Exploiter 20 lignes membres','metric':'routes','target':20,'xp_reward':1000,'cash_reward':150000},
+    {'code':'member_connections','name':'Créer 8 connexions entre hubs membres','metric':'connections','target':8,'xp_reward':1400,'cash_reward':200000},
+    {'code':'collective_savings','name':'Économiser 1 M€ grâce aux bonus','metric':'savings','target':1000000,'xp_reward':1800,'cash_reward':300000},
+]
+
+def player_alliance_level(xp):
+    xp=max(0,int(xp or 0));current=PLAYER_ALLIANCE_LEVELS[0]
+    for row in PLAYER_ALLIANCE_LEVELS:
+        if xp>=row['xp']:current=row
+        else:break
+    idx=PLAYER_ALLIANCE_LEVELS.index(current);nxt=PLAYER_ALLIANCE_LEVELS[idx+1] if idx+1<len(PLAYER_ALLIANCE_LEVELS) else None
+    return {**current,'next_xp':nxt['xp'] if nxt else current['xp'],'maxed':nxt is None}
+
+def era_state(db,u,levels=None,progress=None):
+    levels=levels if levels is not None else research_levels(db,u.id)
+    progress=progress if progress is not None else career_progress(db,u)
+    total=sum(int(v or 0) for v in levels.values());current=GAME_ERAS[0]
+    for era in GAME_ERAS:
+        if progress['level']>=era['min_level'] and total>=era['min_research']:current=era
+    idx=GAME_ERAS.index(current);nxt=GAME_ERAS[idx+1] if idx+1<len(GAME_ERAS) else None
+    next_progress=100
+    if nxt:
+        lp=min(1,progress['level']/max(1,nxt['min_level']));rp=min(1,total/max(1,nxt['min_research'])) if nxt['min_research'] else 1
+        next_progress=round(min(lp,rp)*100)
+    return {'current':current,'next':nxt,'research_total':total,'career_level':progress['level'],'next_progress':next_progress,'eras':GAME_ERAS}
+
+def company_modifier_payload(db,u,levels=None,progress=None):
+    era=era_state(db,u,levels,progress);sources=[];totals={};alliance_totals={};player_alliance_totals={};airline_alliance_totals={}
+    def add(source,label,bonuses,bucket=None):
+        clean={k:float(v) for k,v in (bonuses or {}).items()}
+        if not clean:return
+        sources.append({'source':source,'label':label,'bonuses':clean})
+        for k,v in clean.items():totals[k]=totals.get(k,0)+v
+        if bucket in ('player','airline'):
+            target=player_alliance_totals if bucket=='player' else airline_alliance_totals
+            for k,v in clean.items():
+                alliance_totals[k]=alliance_totals.get(k,0)+v
+                target[k]=target.get(k,0)+v
+    add('era',era['current']['name'],era['current'].get('bonuses',{}))
+    am=db.scalar(select(AirlineAllianceMembership).where(AirlineAllianceMembership.user_id==u.id))
+    cfg=(globals().get('AIRLINE_ALLIANCES') or {}).get(am.alliance_code) if am else None
+    if cfg:add('airline_alliance',cfg['name'],cfg.get('bonuses',{}),'airline')
+    pm=db.scalar(select(PlayerAllianceMember).where(PlayerAllianceMember.user_id==u.id))
+    pa=db.get(PlayerAlliance,pm.alliance_id) if pm else None
+    pl=player_alliance_level(pa.xp) if pa else None
+    if pa and pl:add('player_alliance',f'{pa.name} · niv. {pl["level"]}',pl.get('bonuses',{}),'player')
+    for bucket in (totals,alliance_totals,player_alliance_totals,airline_alliance_totals):
+        for k in list(bucket):bucket[k]=max(-45,min(25,bucket[k]))
+    return {'totals':totals,'alliance_totals':alliance_totals,'player_alliance_totals':player_alliance_totals,
+            'airline_alliance_totals':airline_alliance_totals,'sources':sources,'era':era,
+            'player_alliance_level':pl,'player_alliance_id':pa.id if pa else None}
+
+def modifier_factor(mods,category):
+    return max(.55,min(1.25,1+float((mods or {}).get('totals',{}).get(category,0))/100))
+
+def record_alliance_saving(db,u,mods,category,base_amount,final_amount,label=''):
+    alliance_pct=float((mods or {}).get('player_alliance_totals',{}).get(category,0) or 0)
+    total_saved=max(0,float(base_amount)-float(final_amount))
+    attributable=min(total_saved,max(0,float(base_amount)*(1-(1+alliance_pct/100))))
+    if attributable<.01:return 0
+    row=AllianceBenefitLog(user_id=u.id,alliance_id=(mods or {}).get('player_alliance_id'),source='alliance',category=category,base_amount=float(base_amount),final_amount=float(final_amount),saved_amount=round(attributable,2),label=label[:160])
+    db.add(row);return attributable
+
+def research_cost_factor(db,user_id,spec,levels=None,extra_percent=0):
+    lv=levels if levels is not None else research_levels(db,user_id);factor=1.0-(lv.get('fuel_efficiency',0)*.02)
     desc=(spec or {}).get('description','')
     if 'T' in str(desc) or 'turboprop' in str((spec or {}).get('category','')).lower():factor-=lv.get('propeller_efficiency',0)*.03
-    return max(.72,factor)
+    factor*=1+float(extra_percent or 0)/100
+    return max(.60,factor)
 
 def accrue_loans(db,u):
     now=now_utc()
@@ -293,6 +384,9 @@ def settle_economy(db,u):
     routes=db.scalars(select(Route).where(Route.user_id==u.id)).all()
     aircraft={a.id:a for a in db.scalars(select(Aircraft).where(Aircraft.user_id==u.id)).all()}
     marketing=active_marketing_boost(db,u.id);partner_bonus=partner_revenue_bonus(db,u.id)
+    research_lv=research_levels(db,u.id);mods=company_modifier_payload(db,u,levels=research_lv)
+    fuel_factor_extra=mods['totals'].get('fuel',0);maintenance_factor=modifier_factor(mods,'maintenance');demand_bonus=mods['totals'].get('demand',0)/100
+    alliance_for_flights=db.get(PlayerAlliance,mods.get('player_alliance_id')) if mods.get('player_alliance_id') else None
     for r in routes:
         a=aircraft.get(r.aircraft_id)
         if not a:continue
@@ -308,14 +402,28 @@ def settle_economy(db,u):
             st=crew_status_for(db,u.id,spec,haversine_km(o['lat'],o['lon'],d['lat'],d['lon']),r.origin)
             cfg={k:getattr(settings,k) for k in ('economy_price','premium_price','business_price','first_price','baggage_fee','overbooking_percent')}
             upper=min(completed,prog.completed_legs+50)
+            route_effective={'fuel':0.0,'maintenance':0.0};route_player_saved={'fuel':0.0,'maintenance':0.0}
             for leg_index in range(prog.completed_legs+1,upper+1):
                 outbound=(leg_index%2)==1
                 fo,fd=(o,d) if outbound else (d,o)
-                econ=economy_detailed(fo,fd,spec,u.reputation,cfg,sdict,marketing,partner_bonus,st['cost_factor'],research_cost_factor(db,u.id,spec))
+                econ=economy_detailed(fo,fd,spec,u.reputation,cfg,sdict,marketing,partner_bonus,st['cost_factor'],research_cost_factor(db,u.id,spec,research_lv,fuel_factor_extra),maintenance_factor,demand_bonus)
+                # Track the portion saved specifically by the player's persistent alliance.
+                # Era and airline-alliance effects remain separate and are not falsely credited to the player alliance.
+                for cat in ('fuel','maintenance'):
+                    effective=float((econ.get('cost_breakdown') or {}).get(cat,0) or 0);route_effective[cat]+=effective
+                    player_pct=float(mods.get('player_alliance_totals',{}).get(cat,0) or 0);total_pct=float(mods.get('totals',{}).get(cat,0) or 0)
+                    if player_pct<0 and effective>0:
+                        denom=max(.01,1+total_pct/100);without_player=max(.01,1+(total_pct-player_pct)/100)
+                        route_player_saved[cat]+=max(0,effective*(without_player/denom)-effective)
                 profit=econ['profit'];u.cash+=profit
                 db.add(FlightRecord(user_id=u.id,route_id=r.id,aircraft_id=a.id,tail=a.tail,origin=fo['code'],destination=fd['code'],
                     passengers=econ['passengers'],load_factor=econ['load_factor'],ticket_revenue=econ['ticket_revenue'],ancillary_revenue=econ['ancillary_revenue'],operating_cost=econ['cost'],profit=profit))
+                if alliance_for_flights:alliance_for_flights.xp+=max(1,int(econ['passengers']/80))
                 log_tx(db,u.id,'flight',f'{a.tail} · {fo["code"]} → {fd["code"]}',profit)
+            if mods.get('player_alliance_id'):
+                for cat,label in (('fuel','Carburant négocié'),('maintenance','Maintenance alliance')):
+                    saved=round(route_player_saved[cat],2);effective=round(route_effective[cat],2)
+                    if saved>.01:db.add(AllianceBenefitLog(user_id=u.id,alliance_id=mods['player_alliance_id'],source='player_alliance',category=cat,base_amount=effective+saved,final_amount=effective,saved_amount=saved,label=f'{label} · {o["code"]} ↔ {d["code"]}'))
             prog.completed_legs=upper
     if elapsed>0:
         monthly=db.scalar(select(func.sum(Employee.salary_monthly)).where(Employee.user_id==u.id)) or 0
@@ -421,7 +529,8 @@ def auto_balance_hr(db,u,force=False,max_hires=28):
     if not force and policy.last_autohire_at and (now-policy.last_autohire_at).total_seconds()<6*3600:
         return {'enabled':True,'hired':0,'reason':'Prochain équilibrage automatique dans quelques heures'}
     payroll=db.scalar(select(func.sum(Employee.salary_monthly)).where(Employee.user_id==u.id)) or 0
-    hired=[];spent=0
+    mods=company_modifier_payload(db,u);training_factor=modifier_factor(mods,'training')
+    hired=[];spent=0;alliance_saved=0
     for row in hr_targets(db,u.id):
         if len(hired)>=max_hires:break
         hub=row['ident']
@@ -430,22 +539,22 @@ def auto_balance_hr(db,u,force=False,max_hires=28):
             current=db.scalar(select(func.count()).select_from(Employee).where(Employee.user_id==u.id,Employee.role.in_(['pilot','copilot']),Employee.home_hub==hub,Employee.qualification==qual)) or 0
             for i in range(max(0,target-current)):
                 if len(hired)>=max_hires:break
-                role='pilot' if i%2==0 else 'copilot';e,fee=_auto_employee(db,u.id,role,hub,qual,len(hired))
+                role='pilot' if i%2==0 else 'copilot';e,base_fee=_auto_employee(db,u.id,role,hub,qual,len(hired));fee=round(base_fee*training_factor,2)
                 if payroll+e.salary_monthly>policy.monthly_budget or u.cash<fee:
                     db.expunge(e);break
-                payroll+=e.salary_monthly;u.cash-=fee;spent+=fee;hired.append(e)
+                payroll+=e.salary_monthly;u.cash-=fee;spent+=fee;hired.append(e);alliance_saved+=record_alliance_saving(db,u,mods,'training',base_fee,fee,f'Formation/recrutement {role} · {hub}')
         needs=[('cabin_crew',max(0,row['cabin']['target']-row['cabin']['current']),''),('mechanic',max(0,row['mechanics']['target']-row['mechanics']['current']),''),('ground_agent',max(0,row['ground']['target']-row['ground']['current']),'')]
         for role,count,qual in needs:
             for _ in range(count):
                 if len(hired)>=max_hires:break
-                e,fee=_auto_employee(db,u.id,role,hub,qual,len(hired))
+                e,base_fee=_auto_employee(db,u.id,role,hub,qual,len(hired));fee=round(base_fee*training_factor,2)
                 if payroll+e.salary_monthly>policy.monthly_budget or u.cash<fee:
                     db.expunge(e);break
-                payroll+=e.salary_monthly;u.cash-=fee;spent+=fee;hired.append(e)
+                payroll+=e.salary_monthly;u.cash-=fee;spent+=fee;hired.append(e);alliance_saved+=record_alliance_saving(db,u,mods,'training',base_fee,fee,f'Formation/recrutement {role} · {hub}')
     policy.last_autohire_at=now;policy.updated_at=now
     if spent:log_tx(db,u.id,'staff_auto',f'Auto-embauche OPS · {len(hired)} recrutement(s)',-spent)
     db.flush()
-    return {'enabled':True,'hired':len(hired),'spent':round(spent,2),'payroll':round(payroll,2),'monthly_budget':policy.monthly_budget}
+    return {'enabled':True,'hired':len(hired),'spent':round(spent,2),'alliance_saving':round(alliance_saved,2),'training_modifier':mods['totals'].get('training',0),'payroll':round(payroll,2),'monthly_budget':policy.monthly_budget}
 
 PARTNER_OFFERS=[
     {'id':'hotel-aurora','type':'hotel','name':'Aurora Hotels','fee':2_500_000,'revenue_bonus':.008,'reputation_bonus':1},
@@ -615,7 +724,7 @@ def daily_quests(db,u):
 
 # -------- Page routes --------
 @app.get('/health')
-def health():return {'status':'ok','version':'1.1.0','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
+def health():return {'status':'ok','version':'1.2.0','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
 
 @app.get('/')
 def root(request:Request):
@@ -698,6 +807,24 @@ class HubAssetBuyReq(BaseModel):ident:str;asset_key:str;kind:str;name:str='';lon
 class SpecialBaseReq(BaseModel):airport_ident:str;branch:str
 class SpecialContractReq(BaseModel):contract_code:str;base_id:int
 
+def priced_aircraft_spec(db,u,spec,entitlements=None):
+    x=dict(spec);mods=company_modifier_payload(db,u);entitlements=entitlements or set()
+    buy_base=float(x.get('price') or 0);lease_base=float(x.get('lease') or buy_base*.09)
+    if x.get('icao','').startswith('A35') and 'premium_a350' in entitlements:buy_base*=.92;lease_base*=.92
+    if x.get('icao') in ('B38M','B37M','B39M','B3JM') and 'premium_b38m' in entitlements:buy_base*=.92;lease_base*=.92
+    x['catalog_price']=x.get('price');x['catalog_lease']=x.get('lease')
+    x['base_price']=round(buy_base,2);x['base_lease']=round(lease_base,2)
+    x['price']=round(buy_base*modifier_factor(mods,'aircraft_purchase'),2)
+    x['lease']=round(lease_base*modifier_factor(mods,'aircraft_lease'),2)
+    x['economic_modifiers']=mods['totals']
+    return x
+
+def route_opening_fee(origin,destination,spec):
+    o=airport_detail(origin);d=airport_detail(destination)
+    if not o or not d:return 150_000
+    distance=haversine_km(o['lat'],o['lon'],d['lat'],d['lon']);seats=max(1,int((spec or {}).get('seats') or 1))
+    return round(75_000+distance*35+seats*250,2)
+
 # -------- Catalog APIs --------
 @app.get('/api/airports/search')
 def api_airport_search(q:str='',limit:int=30):return search_airports(q,limit=limit)
@@ -712,14 +839,19 @@ def api_airport_detail(ident:str):
     return d
 
 @app.get('/api/aircraft/catalog')
-def api_aircraft_catalog(q:str='',manufacturer:str='',commercial_only:bool=False,limit:int=60,offset:int=0):
-    return {'items':search_aircraft(q,manufacturer,commercial_only,limit=limit,offset=offset),'manufacturers':aircraft_manufacturers()}
+def api_aircraft_catalog(request:Request,q:str='',manufacturer:str='',commercial_only:bool=False,limit:int=60,offset:int=0):
+    with SessionLocal() as db:
+        u=require_user(request,db);ent={x.item_code for x in db.scalars(select(ShopEntitlement).where(ShopEntitlement.user_id==u.id)).all()}
+        items=[priced_aircraft_spec(db,u,x,ent) for x in search_aircraft(q,manufacturer,commercial_only,limit=limit,offset=offset)]
+        return {'items':items,'manufacturers':aircraft_manufacturers(),'modifiers':company_modifier_payload(db,u)['totals']}
 
 @app.get('/api/aircraft/catalog/{code}')
-def api_aircraft_detail(code:str):
+def api_aircraft_detail(code:str,request:Request):
     d=aircraft_detail(code)
     if not d:raise HTTPException(404,'Type avion inconnu')
-    return d
+    with SessionLocal() as db:
+        u=require_user(request,db);ent={x.item_code for x in db.scalars(select(ShopEntitlement).where(ShopEntitlement.user_id==u.id)).all()}
+        return priced_aircraft_spec(db,u,d,ent)
 
 @app.get('/api/airlines/search')
 def api_airlines(q:str='',limit:int=40):return search_airlines(q,limit)
@@ -835,18 +967,20 @@ def api_buy_aircraft(req:AircraftBuyReq,request:Request):
         if pr['level']<min_level:raise HTTPException(400,f"Niveau {min_level} requis pour cet appareil spécialisé (niveau actuel {pr['level']}).")
         hub=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==req.home_hub))
         if not hub:raise HTTPException(400,'Base non possédée')
-        price=spec['price'] if req.acquisition=='buy' else spec['lease']
+        base_price=float(spec['price'] if req.acquisition=='buy' else spec['lease'])
         # Premium shop entitlements accelerate progression without making the aircraft inaccessible to free players.
         ent={x.item_code for x in db.scalars(select(ShopEntitlement).where(ShopEntitlement.user_id==u.id)).all()}
-        if spec['icao'].startswith('A35') and 'premium_a350' in ent:price*=.92
-        if spec['icao'] in ('B38M','B37M','B39M','B3JM') and 'premium_b38m' in ent:price*=.92
+        if spec['icao'].startswith('A35') and 'premium_a350' in ent:base_price*=.92
+        if spec['icao'] in ('B38M','B37M','B39M','B3JM') and 'premium_b38m' in ent:base_price*=.92
+        mods=company_modifier_payload(db,u,progress=pr);category='aircraft_purchase' if req.acquisition=='buy' else 'aircraft_lease'
+        price=round(base_price*modifier_factor(mods,category),2)
         if u.cash<price:raise HTTPException(400,'Fonds insuffisants')
         p=profile_for(db,u);count=db.scalar(select(func.count()).select_from(Aircraft).where(Aircraft.user_id==u.id)) or 0
         prefix='N' if airport_detail(req.home_hub).get('country')=='US' else 'F-SK'
         tail=f'{prefix}{count+1:03d}'
         a=Aircraft(user_id=u.id,type_icao=spec['icao'],model_variant=req.model_variant[:100],tail=tail,acquisition=req.acquisition,home_hub=req.home_hub,
                    livery_primary=p.primary_color,livery_secondary=p.secondary_color,livery_accent=p.accent_color,livery_template=p.livery_template)
-        u.cash-=price;db.add(a);db.flush();log_tx(db,u.id,'aircraft',f'{req.acquisition.upper()} {tail} · {spec["name"]}',-price);db.commit();return {'ok':True,'tail':tail,'id':a.id}
+        u.cash-=price;db.add(a);db.flush();saved=record_alliance_saving(db,u,mods,category,base_price,price,f'{tail} · {spec["name"]}');log_tx(db,u.id,'aircraft',f'{req.acquisition.upper()} {tail} · {spec["name"]}',-price);db.commit();return {'ok':True,'tail':tail,'id':a.id,'price':price,'base_price':round(base_price,2),'alliance_saving':round(saved,2)}
 
 @app.post('/api/aircraft/{aircraft_id}/livery')
 def api_aircraft_livery(aircraft_id:int,req:LiveryDetailReq,request:Request):
@@ -863,8 +997,11 @@ def api_aircraft_livery(aircraft_id:int,req:LiveryDetailReq,request:Request):
 @app.get('/api/staff/candidates')
 def api_staff_candidates(request:Request,role:str=''):
     with SessionLocal() as db:
-        u=require_user(request,db)
-        return {'roles':STAFF_ROLES,'items':generate_staff_candidates(u.id,role)}
+        u=require_user(request,db);mods=company_modifier_payload(db,u);hr=db.scalar(select(func.count()).select_from(Employee).where(Employee.user_id==u.id,Employee.role=='hr_manager')) or 0
+        factor=(.88 if hr else 1.0)*modifier_factor(mods,'training');items=[]
+        for c in generate_staff_candidates(u.id,role):
+            x=dict(c);x['base_hiring_fee']=c['hiring_fee'];x['hiring_fee']=round(c['hiring_fee']*factor,2);x['discount_percent']=round((1-factor)*100,1);items.append(x)
+        return {'roles':STAFF_ROLES,'items':items,'training_modifier':mods['totals'].get('training',0)}
 
 @app.get('/api/staff')
 def api_staff(request:Request):
@@ -885,10 +1022,10 @@ def api_staff_hire(req:StaffHireReq,request:Request):
         hub=req.home_hub or (primary_hub(db,u).airport_ident if primary_hub(db,u) else '')
         if hub and not db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==hub)):raise HTTPException(400,'Hub non possédé')
         hr=db.scalar(select(func.count()).select_from(Employee).where(Employee.user_id==u.id,Employee.role=='hr_manager')) or 0
-        fee=c['hiring_fee']*(.88 if hr else 1.0)
+        base_fee=c['hiring_fee']*(.88 if hr else 1.0);mods=company_modifier_payload(db,u);fee=round(base_fee*modifier_factor(mods,'training'),2)
         if u.cash<fee:raise HTTPException(400,'Fonds insuffisants')
         e=Employee(user_id=u.id,name=c['name'],role=c['role'],qualification=c['qualification'],home_hub=hub,salary_monthly=c['salary_monthly'],hiring_fee=fee,quality=c['quality'])
-        u.cash-=fee;db.add(e);log_tx(db,u.id,'staff',f'Recrutement {c["name"]} · {c["role_label"]}',-fee);db.commit();return {'ok':True,'id':e.id}
+        u.cash-=fee;db.add(e);db.flush();saved=record_alliance_saving(db,u,mods,'training',base_fee,fee,f'Recrutement {c["name"]}');log_tx(db,u.id,'staff',f'Recrutement {c["name"]} · {c["role_label"]}',-fee);db.commit();return {'ok':True,'id':e.id,'fee':fee,'base_fee':round(base_fee,2),'alliance_saving':round(saved,2)}
 
 @app.delete('/api/staff/{employee_id}')
 def api_staff_fire(employee_id:int,request:Request):
@@ -927,7 +1064,7 @@ def api_route_pricing_get(route_id:int,request:Request):
         cfg={k:getattr(st,k) for k in ('economy_price','premium_price','business_price','first_price','baggage_fee','overbooking_percent')}
         sdict={k:getattr(svc,k) for k in ('wifi','meals','entertainment','comfort','cabin_service','cleaning')}
         crew=crew_status_for(db,u.id,spec,haversine_km(o['lat'],o['lon'],d['lat'],d['lon']),r.origin)
-        estimate=economy_detailed(o,d,spec,u.reputation,cfg,sdict,active_marketing_boost(db,u.id),partner_revenue_bonus(db,u.id),crew['cost_factor'],research_cost_factor(db,u.id,spec))
+        mods=company_modifier_payload(db,u);estimate=economy_detailed(o,d,spec,u.reputation,cfg,sdict,active_marketing_boost(db,u.id),partner_revenue_bonus(db,u.id),crew['cost_factor'],research_cost_factor(db,u.id,spec,extra_percent=mods['totals'].get('fuel',0)),modifier_factor(mods,'maintenance'),mods['totals'].get('demand',0)/100)
         return {'settings':cfg,'estimate':estimate,'crew':crew}
 
 @app.post('/api/routes/{route_id}/pricing')
@@ -1142,7 +1279,10 @@ def api_route_check(origin:str,destination:str,aircraft_id:int,request:Request):
     with SessionLocal() as db:
         u=require_user(request,db);a=db.get(Aircraft,aircraft_id)
         if not a or a.user_id!=u.id:raise HTTPException(404,'Avion introuvable')
-        return route_operational_check(origin,destination,spec_for_aircraft(a))
+        spec=spec_for_aircraft(a);check=route_operational_check(origin,destination,spec);mods=company_modifier_payload(db,u)
+        effective_dest=(check.get('alternative') or {}).get('via') if not check.get('ok') else destination
+        effective_dest=effective_dest or destination;base=route_opening_fee(origin,effective_dest,spec);cost=round(base*modifier_factor(mods,'route_creation'),2)
+        check['base_opening_cost']=base;check['opening_cost']=cost;check['route_creation_modifier']=mods['totals'].get('route_creation',0);return check
 
 @app.post('/api/routes')
 def api_create_route(req:RouteReq,request:Request):
@@ -1161,8 +1301,10 @@ def api_create_route(req:RouteReq,request:Request):
             # The user's aircraft must also be able to fly the operated first segment.
             first=route_operational_check(req.origin,dest,spec_for_aircraft(a))
             if not first['ok']:return JSONResponse({'ok':False,'check':first},status_code=409)
+        spec=spec_for_aircraft(a);mods=company_modifier_payload(db,u);base_cost=route_opening_fee(req.origin,dest,spec);opening_cost=round(base_cost*modifier_factor(mods,'route_creation'),2)
+        if u.cash<opening_cost:raise HTTPException(400,f'Fonds insuffisants pour les frais d’ouverture ({opening_cost:,.0f} €)')
         r=Route(user_id=u.id,aircraft_id=a.id,origin=req.origin,destination=dest,commercial_destination=commercial,via=via,partner_airline=partner_airline,partner_aircraft=partner_aircraft,frequency=max(1,min(7,req.frequency)))
-        db.add(r);db.commit();return {'ok':True,'route_id':r.id,'alternative':bool(commercial)}
+        u.cash-=opening_cost;db.add(r);db.flush();saved=record_alliance_saving(db,u,mods,'route_creation',base_cost,opening_cost,f'Ouverture {req.origin} → {dest}');log_tx(db,u.id,'route_creation',f'Ouverture ligne {req.origin} → {dest}',-opening_cost);db.commit();return {'ok':True,'route_id':r.id,'alternative':bool(commercial),'opening_cost':opening_cost,'base_opening_cost':base_cost,'alliance_saving':round(saved,2)}
 
 @app.delete('/api/routes/{route_id}')
 def api_delete_route(route_id:int,request:Request):
@@ -1193,7 +1335,7 @@ def api_state(request:Request):
             item['service']={k:getattr(svc,k) for k in ('wifi','meals','entertainment','comfort','cabin_service','cleaning')}
             item['livery_detail']={'tail_color':liv.tail_color,'engine_color':liv.engine_color,'belly_color':liv.belly_color,'nose_color':liv.nose_color,'stripe_style':liv.stripe_style,'logo_scale':liv.logo_scale,'logo_position':liv.logo_position}
             aircraft.append(item)
-        marketing=active_marketing_boost(db,u.id);pbonus=partner_revenue_bonus(db,u.id)
+        marketing=active_marketing_boost(db,u.id);pbonus=partner_revenue_bonus(db,u.id);mods=company_modifier_payload(db,u)
         route_out=[]
         for r in routes:
             a=next((x for x in acs if x.id==r.aircraft_id),None)
@@ -1203,7 +1345,7 @@ def api_state(request:Request):
             cfg={k:getattr(settings,k) for k in ('economy_price','premium_price','business_price','first_price','baggage_fee','overbooking_percent')}
             sdict={k:getattr(svc,k) for k in ('wifi','meals','entertainment','comfort','cabin_service','cleaning')}
             crew=crew_status_for(db,u.id,s['spec'],haversine_km(o['lat'],o['lon'],d['lat'],d['lon']),r.origin) if o and d else {}
-            econ=economy_detailed(o,d,s['spec'],u.reputation,cfg,sdict,marketing,pbonus,crew.get('cost_factor',1.0),research_cost_factor(db,u.id,s['spec'])) if o and d else None
+            econ=economy_detailed(o,d,s['spec'],u.reputation,cfg,sdict,marketing,pbonus,crew.get('cost_factor',1.0),research_cost_factor(db,u.id,s['spec'],extra_percent=mods['totals'].get('fuel',0)),modifier_factor(mods,'maintenance'),mods['totals'].get('demand',0)/100) if o and d else None
             partner=None
             if r.commercial_destination:
                 cd=airport_detail(r.commercial_destination)
@@ -1220,7 +1362,7 @@ def api_state(request:Request):
         db.commit()
         return {'user':{'username':u.username,'company_name':u.company_name,'cash':round(u.cash,2),'reputation':u.reputation},
                 'profile':{'primary_color':p.primary_color,'secondary_color':p.secondary_color,'accent_color':p.accent_color,'logo_text':p.logo_text,'logo_data':p.logo_data,'livery_template':p.livery_template},
-                'hubs':hub_out,'aircraft':aircraft,'routes':route_out,'sim_speed':SIM_SPEED,'progression':progress,'quests':quests,
+                'hubs':hub_out,'aircraft':aircraft,'routes':route_out,'sim_speed':SIM_SPEED,'progression':progress,'quests':quests,'modifiers':mods,
                 'company':{'employees':employees,'marketing_boost':marketing,'active_campaigns':active_campaigns,'partner_bonus':pbonus,'satisfaction':overall_sat,
                            'today_flights':len(today_flights),'today_profit':round(today_profit,2),'today_passengers':today_pax}}
 
@@ -1274,10 +1416,30 @@ def api_weather_radar(request:Request):
     _weather_cache[key]=(now,out);return out
 
 FR24_BASE_URL=os.getenv('FR24_API_BASE_URL','https://fr24api.flightradar24.com/api').rstrip('/')
+FR24_WORLD_CACHE_SECONDS=max(45,min(600,int(os.getenv('FR24_WORLD_CACHE_SECONDS','120'))))
+FR24_WORLD_TILE_LIMIT=max(1000,min(20000,int(os.getenv('FR24_WORLD_TILE_LIMIT','20000'))))
+FR24_WORLD_WORKERS=max(1,min(4,int(os.getenv('FR24_WORLD_WORKERS','3'))))
+FR24_WORLD_TILES=[
+    '89.999,30,-179.999,-90','89.999,30,-90,0','89.999,30,0,90','89.999,30,90,179.999',
+    '30,-30,-179.999,-90','30,-30,-90,0','30,-30,0,90','30,-30,90,179.999',
+    '-30,-89.999,-179.999,-90','-30,-89.999,-90,0','-30,-89.999,0,90','-30,-89.999,90,179.999',
+]
+_world_fetch_lock=threading.Lock()
+_fr24_airline_cache=BoundedCache(384)
+_aircraft_photo_cache=BoundedCache(512)
+
+COMMON_AIRLINES={
+    'AFR':'Air France','KLM':'KLM','BAW':'British Airways','DLH':'Lufthansa','SWR':'SWISS','AUA':'Austrian Airlines','IBE':'Iberia','VLG':'Vueling','RYR':'Ryanair','EZY':'easyJet','ITY':'ITA Airways','SAS':'Scandinavian Airlines','FIN':'Finnair','TAP':'TAP Air Portugal','LOT':'LOT Polish Airlines','AEE':'Aegean Airlines','THY':'Turkish Airlines','WZZ':'Wizz Air','BEL':'Brussels Airlines',
+    'AAL':'American Airlines','DAL':'Delta Air Lines','UAL':'United Airlines','SWA':'Southwest Airlines','JBU':'JetBlue','ASA':'Alaska Airlines','ACA':'Air Canada','WJA':'WestJet','FFT':'Frontier Airlines','NKS':'Spirit Airlines',
+    'LAN':'LATAM Airlines','AVA':'Avianca','AMX':'Aeromexico','CMP':'Copa Airlines','GLO':'GOL','AZU':'Azul','ARG':'Aerolíneas Argentinas',
+    'UAE':'Emirates','QTR':'Qatar Airways','ETD':'Etihad Airways','SVA':'Saudia','OMA':'Oman Air','GFA':'Gulf Air','KAC':'Kuwait Airways','FDB':'flydubai',
+    'ETH':'Ethiopian Airlines','SAA':'South African Airways','RAM':'Royal Air Maroc','MSR':'EgyptAir','KQA':'Kenya Airways','MAU':'Air Mauritius','RWD':'RwandAir',
+    'SIA':'Singapore Airlines','CPA':'Cathay Pacific','CCA':'Air China','CES':'China Eastern Airlines','CSN':'China Southern Airlines','ANA':'All Nippon Airways','JAL':'Japan Airlines','KAL':'Korean Air','AAR':'Asiana Airlines','THA':'Thai Airways','MAS':'Malaysia Airlines','GIA':'Garuda Indonesia','VJC':'VietJet Air','HVN':'Vietnam Airlines','AIC':'Air India','AXB':'Air India Express','IGO':'IndiGo','PIA':'Pakistan International Airlines','CAL':'China Airlines','EVA':'EVA Air',
+    'QFA':'Qantas','VOZ':'Virgin Australia','ANZ':'Air New Zealand','FJI':'Fiji Airways','JST':'Jetstar'
+}
 
 def _fr24_token():
-    # Primary key plus compatible aliases to avoid a silent failure when the secret
-    # was already created in Render under a different obvious name.
+    # The token stays strictly server-side.
     for key in ('FR24_API_TOKEN','FLIGHTRADAR24_API_TOKEN','FLIGHTRADAR_TOKEN','FR24_TOKEN'):
         value=os.getenv(key,'').strip()
         if value:return value
@@ -1288,59 +1450,51 @@ def _fr24_headers():
         'Authorization':f'Bearer {_fr24_token()}',
         'Accept':'application/json',
         'Accept-Version':'v1',
-        'User-Agent':'SKYLINE-Airways/0.7.1'
+        'User-Agent':'SKYLINE-Airways/1.2'
     }
 
 def _fr24_normalize(x, airport=None):
-    """Normalize FR24 full-position payload without ever exposing the API token."""
-    lat=x.get('lat'); lon=x.get('lon')
+    """Normalize FR24 live-position payload without ever exposing the API token."""
+    lat=x.get('lat');lon=x.get('lon')
     if lat is None or lon is None:return None
-    try: alt=float(x.get('alt')) if x.get('alt') is not None else None
-    except (TypeError,ValueError): alt=None
-    try: speed=float(x.get('gspeed')) if x.get('gspeed') is not None else None
-    except (TypeError,ValueError): speed=None
-    try: heading=float(x.get('track') or 0)
-    except (TypeError,ValueError): heading=0
-    distance_km=None; on_ground=False; phase='airborne'
+    try:alt=float(x.get('alt')) if x.get('alt') is not None else None
+    except (TypeError,ValueError):alt=None
+    try:speed=float(x.get('gspeed')) if x.get('gspeed') is not None else None
+    except (TypeError,ValueError):speed=None
+    try:heading=float(x.get('track') or 0)
+    except (TypeError,ValueError):heading=0
+    distance_km=None;on_ground=False;phase='airborne'
     if airport:
-        distance_km=haversine_km(float(airport['lat']),float(airport['lon']),float(lat),float(lon))
-        elev=float(airport.get('elevation_ft') or 0)
-        # FR24's full-position payload does not provide a universal on_ground flag.
-        # For an airport view we infer surface traffic from proximity, field elevation
-        # and groundspeed. This fixes high-elevation airports where `alt < 200` fails.
+        distance_km=haversine_km(float(airport['lat']),float(airport['lon']),float(lat),float(lon));elev=float(airport.get('elevation_ft') or 0)
         surface_radius=7.5 if airport.get('type')=='large_airport' else 5.5 if airport.get('type')=='medium_airport' else 4.0
         altitude_margin=700 if airport.get('type')=='large_airport' else 550
-        low_enough=(alt is None) or alt <= elev+altitude_margin
-        slow_enough=(speed is None) or speed <= 85
-        on_ground=distance_km <= surface_radius and low_enough and slow_enough
-        if on_ground: phase='ground'
-        elif distance_km <= 18 and alt is not None and alt <= elev+6000: phase='terminal-area'
-    else:
-        # Approximation used only to keep obvious surface targets off the world-globe layer.
-        on_ground=(speed is not None and speed <= 55 and alt is not None and alt <= 1200)
+        low_enough=(alt is None) or alt<=elev+altitude_margin;slow_enough=(speed is None) or speed<=85
+        on_ground=distance_km<=surface_radius and low_enough and slow_enough
         if on_ground:phase='ground'
+        elif distance_km<=18 and alt is not None and alt<=elev+6000:phase='terminal-area'
+    else:
+        # Global status only; this estimate never filters a target out of the response.
+        on_ground=(speed is not None and speed<=55 and alt is not None and alt<=1200)
+        if on_ground:phase='ground'
+    painted=str(x.get('painted_as') or '').strip().upper();operating=str(x.get('operating_as') or x.get('operated_as') or '').strip().upper()
     return {
-        'id':x.get('fr24_id'),'callsign':x.get('callsign') or x.get('flight') or '',
-        'flight':x.get('flight') or '', 'country':'','lon':float(lon),'lat':float(lat),
-        'altitude_ft':alt,'velocity_kts':speed,'heading':heading,'type':x.get('type') or '',
-        'reg':x.get('reg') or '','origin':x.get('orig_iata') or x.get('orig_icao') or '',
-        'destination':x.get('dest_iata') or x.get('dest_icao') or '',
-        'airline':x.get('painted_as') or x.get('operating_as') or '',
-        'on_ground':on_ground,'phase':phase,'distance_km':round(distance_km,2) if distance_km is not None else None,
-        'timestamp':x.get('timestamp')
+        'id':x.get('fr24_id'),'fr24_id':x.get('fr24_id'),'hex':x.get('hex') or '',
+        'callsign':x.get('callsign') or x.get('flight') or '','flight':x.get('flight') or '','country':'',
+        'lon':float(lon),'lat':float(lat),'altitude_ft':alt,'velocity_kts':speed,'vertical_speed_fpm':x.get('vspeed'),'heading':heading,
+        'type':x.get('type') or '','reg':x.get('reg') or '','origin':x.get('orig_iata') or x.get('orig_icao') or '',
+        'destination':x.get('dest_iata') or x.get('dest_icao') or '','painted_as':painted,'operating_as':operating,
+        'livery_airline':painted or operating,'airline':painted or operating,'on_ground':on_ground,'phase':phase,
+        'distance_km':round(distance_km,2) if distance_km is not None else None,'timestamp':x.get('timestamp'),'eta':x.get('eta')
     }
 
-def _fetch_fr24(bounds,limit=120,airport=None):
-    token=_fr24_token()
-    if not token:raise RuntimeError('FR24_API_TOKEN absent')
-    headers=_fr24_headers()
-    last_error=None
-    with httpx.Client(timeout=9.0,headers=headers) as client:
-        for mode in ('full','light'):
+def _fetch_fr24(bounds,limit=120,airport=None,modes=('full','light')):
+    if not _fr24_token():raise RuntimeError('FR24_API_TOKEN absent')
+    last_error=None;params={'limit':max(1,min(20000,int(limit)))}
+    if bounds:params['bounds']=bounds
+    with httpx.Client(timeout=8.0,headers=_fr24_headers()) as client:
+        for mode in modes:
             try:
-                r=client.get(f'{FR24_BASE_URL}/live/flight-positions/{mode}',params={'bounds':bounds,'limit':max(1,min(180,int(limit)))})
-                r.raise_for_status()
-                raw=r.json().get('data') or []
+                r=client.get(f'{FR24_BASE_URL}/live/flight-positions/{mode}',params=params);r.raise_for_status();raw=r.json().get('data') or []
                 states=[]
                 for x in raw:
                     n=_fr24_normalize(x,airport)
@@ -1349,55 +1503,136 @@ def _fetch_fr24(bounds,limit=120,airport=None):
                 return states,mode
             except httpx.HTTPStatusError as e:
                 last_error=e
-                # Some FR24 plans expose light but not full. Try light before falling back.
-                if mode=='full' and e.response.status_code in (401,402,403,404,429):
-                    continue
+                if mode=='full' and e.response.status_code in (401,402,403,404,429):continue
                 raise
     if last_error:raise last_error
-    return [],'full'
+    return [],modes[0]
+
+def _fr24_world_snapshot():
+    now=time.time();key=('world-v12',FR24_WORLD_TILE_LIMIT);cached=_traffic_cache.get(key)
+    if cached and now-cached[0]<FR24_WORLD_CACHE_SECONDS:return cached[1]
+    with _world_fetch_lock:
+        cached=_traffic_cache.get(key);now=time.time()
+        if cached and now-cached[0]<FR24_WORLD_CACHE_SECONDS:return cached[1]
+        by_id={};tile_results=[];modes=[]
+        def fetch_tile(bounds):
+            rows,mode=_fetch_fr24(bounds,FR24_WORLD_TILE_LIMIT);return bounds,rows,mode
+        with ThreadPoolExecutor(max_workers=FR24_WORLD_WORKERS) as pool:
+            futures=[pool.submit(fetch_tile,b) for b in FR24_WORLD_TILES]
+            for fut in as_completed(futures):
+                try:
+                    bounds,rows,mode=fut.result();modes.append(mode);tile_results.append({'bounds':bounds,'count':len(rows),'ok':True})
+                    for row in rows:
+                        key_id=row.get('fr24_id') or row.get('id') or f"{row.get('hex')}:{row.get('callsign')}:{row.get('lat')}:{row.get('lon')}"
+                        old=by_id.get(key_id)
+                        if not old or str(row.get('timestamp') or '')>=str(old.get('timestamp') or ''):by_id[key_id]=row
+                except Exception as e:
+                    tile_results.append({'bounds':'unknown','count':0,'ok':False,'error':type(e).__name__})
+        states=list(by_id.values());ground=sum(1 for x in states if x.get('on_ground'));airborne=len(states)-ground
+        mode='full' if modes and all(x=='full' for x in modes) else ('light' if modes and all(x=='light' for x in modes) else 'mixed')
+        out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':mode,
+             'scope':'world','total_count':len(states),'airborne_count':airborne,'ground_count':ground,
+             'tiles_ok':sum(1 for x in tile_results if x['ok']),'tiles_total':len(FR24_WORLD_TILES),'partial':sum(1 for x in tile_results if x['ok'])<len(FR24_WORLD_TILES),
+             'cache_seconds':FR24_WORLD_CACHE_SECONDS,'generated_at':datetime.now(timezone.utc).isoformat(),'tile_results':tile_results}
+        _traffic_cache[key]=(time.time(),out);return out
 
 def _opensky_hub(a,span):
     params={'lamin':a['lat']-span,'lomin':a['lon']-span,'lamax':a['lat']+span,'lomax':a['lon']+span}
-    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/0.7.1'}) as client:
+    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.2'}) as client:
         r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
     states=[]
-    for x in raw[:140]:
+    for x in raw[:400]:
         if len(x)<11 or x[5] is None or x[6] is None:continue
         dist=haversine_km(a['lat'],a['lon'],x[6],x[5])
         states.append({'id':x[0],'icao24':x[0],'callsign':(x[1] or '').strip(),'flight':(x[1] or '').strip(),'country':x[2] or '',
                        'lon':x[5],'lat':x[6],'altitude_ft':int((x[7] or 0)*3.28084),'velocity_kts':round((x[9] or 0)*1.94384,1),
-                       'heading':x[10] or 0,'type':'','reg':'','origin':'','destination':'','airline':'','on_ground':bool(x[8]),
-                       'phase':'ground' if bool(x[8]) else 'airborne','distance_km':round(dist,2)})
-    states.sort(key=lambda x:x.get('distance_km',9999))
-    return states
+                       'heading':x[10] or 0,'type':'','reg':'','origin':'','destination':'','airline':'','painted_as':'','operating_as':'','livery_airline':'',
+                       'on_ground':bool(x[8]),'phase':'ground' if bool(x[8]) else 'airborne','distance_km':round(dist,2)})
+    states.sort(key=lambda x:x.get('distance_km',9999));return states
+
+def _aviation_weather_product(product,icao,ttl):
+    code=''.join(ch for ch in str(icao or '').upper() if ch.isalnum())[:4]
+    if len(code)!=4:raise HTTPException(400,'Code ICAO invalide')
+    key=('aviationweather',product,code);now=time.time();cached=_weather_cache.get(key)
+    if cached and now-cached[0]<ttl:return cached[1]
+    try:
+        with httpx.Client(timeout=7.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.2'}) as client:
+            r=client.get(f'https://aviationweather.gov/api/data/{product}',params={'ids':code,'format':'json'});r.raise_for_status();data=r.json()
+        out={'ok':bool(data),'source':'AviationWeather.gov','product':product.upper(),'station':code,'data':data,'raw':(data[0].get('rawOb') if data and isinstance(data[0],dict) else None)}
+    except Exception as e:out={'ok':False,'source':'AviationWeather.gov','product':product.upper(),'station':code,'data':[],'reason':type(e).__name__}
+    _weather_cache[key]=(now,out);return out
+
+@app.get('/api/aviation/metar')
+def api_aviation_metar(request:Request,icao:str):
+    with SessionLocal() as db:require_user(request,db)
+    return _aviation_weather_product('metar',icao,90)
+
+@app.get('/api/aviation/taf')
+def api_aviation_taf(request:Request,icao:str):
+    with SessionLocal() as db:require_user(request,db)
+    return _aviation_weather_product('taf',icao,600)
+
+@app.get('/api/aviation/notam/status')
+def api_notam_status(request:Request):
+    with SessionLocal() as db:require_user(request,db)
+    return {'ok':False,'configured':False,'message':'NOTAM temps réel temporairement indisponibles.'}
 
 @app.get('/api/integrations/fr24/status')
 def api_fr24_status(request:Request):
     with SessionLocal() as db:require_user(request,db)
     configured=bool(_fr24_token())
-    return {'configured':configured,'provider':'Flightradar24 API' if configured else 'OpenSky fallback',
-            'api_version':'v1','secret_location':'server environment','token_exposed':False}
-
+    return {'configured':configured,'provider':'Flightradar24 API' if configured else 'OpenSky fallback','api_version':'v1','secret_location':'server environment','token_exposed':False,
+            'world_mode':'tiled-full','world_cache_seconds':FR24_WORLD_CACHE_SECONDS,'world_tile_limit':FR24_WORLD_TILE_LIMIT,'sandbox_likely':'sandbox' in FR24_BASE_URL.lower()}
 
 @app.get('/api/integrations/fr24/test')
 def api_fr24_test(request:Request,ident:str='CDG'):
     with SessionLocal() as db:require_user(request,db)
-    if not _fr24_token():
-        return {'ok':False,'configured':False,'provider':'Flightradar24','reason':'FR24_API_TOKEN absent dans l’environnement Render.'}
+    if not _fr24_token():return {'ok':False,'configured':False,'provider':'Flightradar24','reason':'FR24_API_TOKEN absent dans l’environnement Render.'}
     a=airport_detail(ident)
     if not a:raise HTTPException(404,'Aéroport introuvable')
-    span=.12
-    bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}"
+    span=.12;bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}"
     try:
-        states,mode=_fetch_fr24(bounds,25,a)
-        return {'ok':True,'configured':True,'provider':'Flightradar24','mode':mode,'airport':a['code'],
-                'count':len(states),'ground_count':sum(1 for x in states if x.get('on_ground')),
-                'message':'Connexion FR24 valide. Les positions brutes ne sont pas stockées.'}
+        states,mode=_fetch_fr24(bounds,25,a);ground=sum(1 for x in states if x.get('on_ground'))
+        return {'ok':True,'configured':True,'provider':'Flightradar24','mode':mode,'airport':a['code'],'scope':'diagnostic_local','bounds':bounds,
+                'count':len(states),'ground_count':ground,'airborne_count':len(states)-ground,
+                'message':'Test local autour du hub uniquement. Le Globe utilise un balayage mondial séparé.'}
     except httpx.HTTPStatusError as e:
-        return {'ok':False,'configured':True,'provider':'Flightradar24','status_code':e.response.status_code,
-                'reason':'Clé refusée, crédit/plan insuffisant, ou endpoint non autorisé.'}
-    except Exception as e:
-        return {'ok':False,'configured':True,'provider':'Flightradar24','reason':type(e).__name__}
+        return {'ok':False,'configured':True,'provider':'Flightradar24','status_code':e.response.status_code,'reason':'Clé refusée, crédit/plan insuffisant, ou endpoint non autorisé.'}
+    except Exception as e:return {'ok':False,'configured':True,'provider':'Flightradar24','reason':type(e).__name__}
+
+@app.get('/api/integrations/fr24/airline/{code}')
+def api_fr24_airline(code:str,request:Request):
+    with SessionLocal() as db:require_user(request,db)
+    code=''.join(ch for ch in code.upper().strip() if ch.isalnum())[:4]
+    if len(code)<2:raise HTTPException(400,'Code compagnie invalide')
+    if code in COMMON_AIRLINES:return {'ok':True,'airline':{'icao':code,'name':COMMON_AIRLINES[code],'source':'skyline-seed'}}
+    now=time.time();cached=_fr24_airline_cache.get(code)
+    if cached and now-cached[0]<86400:return cached[1]
+    if not _fr24_token():return {'ok':False,'airline':{'icao':code,'name':code,'source':'code'}}
+    try:
+        with httpx.Client(timeout=6.0,headers=_fr24_headers()) as client:r=client.get(f'{FR24_BASE_URL}/static/airlines/{code}/light');r.raise_for_status();d=r.json()
+        out={'ok':True,'airline':{'icao':d.get('icao') or code,'iata':d.get('iata') or '','name':d.get('name') or code,'source':'fr24'}}
+    except Exception:out={'ok':False,'airline':{'icao':code,'name':code,'source':'code'}}
+    _fr24_airline_cache[code]=(now,out);return out
+
+def _planespotters_lookup(kind,value):
+    value=''.join(ch for ch in str(value or '').upper() if ch.isalnum() or ch=='-')
+    if not value:return None
+    try:
+        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.2'}) as client:
+            r=client.get(f'https://api.planespotters.net/pub/photos/{kind}/{value}');r.raise_for_status();d=r.json()
+        photos=d.get('photos') or []
+        if not photos:return None
+        p=photos[0];return {'thumbnail':(p.get('thumbnail') or {}).get('src'),'large':(p.get('large') or {}).get('src'),'photographer':p.get('photographer') or '', 'source_url':p.get('link') or '', 'source':'Planespotters.net'}
+    except Exception:return None
+
+@app.get('/api/live-aircraft/photo')
+def api_live_aircraft_photo(request:Request,reg:str='',hex:str=''):
+    with SessionLocal() as db:require_user(request,db)
+    regkey=''.join(ch for ch in reg.upper() if ch.isalnum() or ch=='-');hexkey=''.join(ch for ch in hex.upper() if ch.isalnum());key=('aircraft-photo',regkey,hexkey);now=time.time();cached=_aircraft_photo_cache.get(key)
+    if cached and now-cached[0]<(86400 if cached[1].get('found') else 21600):return cached[1]
+    photo=_planespotters_lookup('reg',regkey) or _planespotters_lookup('hex',hexkey);out={'ok':True,'found':bool(photo),'photo':photo}
+    _aircraft_photo_cache[key]=(now,out);return out
 
 @app.get('/api/live-traffic')
 def api_live_traffic(ident:str):
@@ -1406,59 +1641,51 @@ def api_live_traffic(ident:str):
     if not a:raise HTTPException(404,'Aéroport introuvable')
     now=time.time();provider='fr24' if _fr24_token() else 'opensky';key=('hub',a['ident'],provider);cached=_traffic_cache.get(key)
     if cached and now-cached[0]<22:return cached[1]
-    span=.18 if a['type']=='large_airport' else .13 if a['type']=='medium_airport' else .10
-    fr24_error=None
+    span=.18 if a['type']=='large_airport' else .13 if a['type']=='medium_airport' else .10;fr24_error=None
     if _fr24_token():
         try:
-            bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}"
-            states,fr24_mode=_fetch_fr24(bounds,120,a)
-            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,
-                 'ground_count':sum(1 for x in states if x.get('on_ground')),'nearby_count':len(states),'real_only':True,'fr24_mode':fr24_mode}
-            _traffic_cache[key]=(now,out);return out
-        except httpx.HTTPStatusError as e:
-            fr24_error=f'HTTP {e.response.status_code}'
-        except Exception as e:
-            fr24_error=type(e).__name__
+            bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}";states,fr24_mode=_fetch_fr24(bounds,500,a);ground=sum(1 for x in states if x.get('on_ground'))
+            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'ground_count':ground,'airborne_count':len(states)-ground,'nearby_count':len(states),'real_only':True,'fr24_mode':fr24_mode};_traffic_cache[key]=(now,out);return out
+        except httpx.HTTPStatusError as e:fr24_error=f'HTTP {e.response.status_code}'
+        except Exception as e:fr24_error=type(e).__name__
     try:
-        states=_opensky_hub(a,span)
-        out={'source':'OpenSky','states':states,'licensed':False,'configured':bool(_fr24_token()),
-             'ground_count':sum(1 for x in states if x.get('on_ground')),'nearby_count':len(states),'real_only':True}
+        states=_opensky_hub(a,span);ground=sum(1 for x in states if x.get('on_ground'));out={'source':'OpenSky','states':states,'licensed':False,'configured':bool(_fr24_token()),'ground_count':ground,'airborne_count':len(states)-ground,'nearby_count':len(states),'real_only':True}
         if fr24_error:out['fr24_error']=fr24_error
     except Exception:
-        out={'source':'unavailable','states':[],'licensed':False,'configured':bool(_fr24_token()),'ground_count':0,'nearby_count':0,'real_only':True}
+        out={'source':'unavailable','states':[],'licensed':False,'configured':bool(_fr24_token()),'ground_count':0,'airborne_count':0,'nearby_count':0,'real_only':True}
         if fr24_error:out['fr24_error']=fr24_error
     _traffic_cache[key]=(now,out);return out
 
+@app.get('/api/live-traffic/world')
+def api_live_traffic_world(request:Request):
+    with SessionLocal() as db:require_user(request,db)
+    if not _fr24_token():return {'source':'unavailable','states':[],'configured':False,'real_only':True,'total_count':0,'airborne_count':0,'ground_count':0,'reason':'FR24 non configuré'}
+    try:return _fr24_world_snapshot()
+    except Exception as e:return JSONResponse({'source':'unavailable','states':[],'configured':True,'real_only':True,'total_count':0,'airborne_count':0,'ground_count':0,'reason':type(e).__name__},status_code=503)
+
 @app.get('/api/live-traffic/box')
-def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=300):
-    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(20,min(180,limit))
+def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=5000):
+    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(20,min(20000,limit))
     bucket=(round(lamin,1),round(lomin,1),round(lamax,1),round(lomax,1),limit,'fr24' if _fr24_token() else 'opensky');now=time.time();cached=_traffic_cache.get(('box',)+bucket)
-    if cached and now-cached[0]<24:return cached[1]
+    if cached and now-cached[0]<30:return cached[1]
     fr24_error=None
     if _fr24_token():
         try:
-            bounds=f'{lamax},{lamin},{lomin},{lomax}'
-            states,fr24_mode=_fetch_fr24(bounds,limit)
-            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':fr24_mode}
-            _traffic_cache[('box',)+bucket]=(now,out);return out
-        except httpx.HTTPStatusError as e:
-            fr24_error=f'HTTP {e.response.status_code}'
-        except Exception as e:
-            fr24_error=type(e).__name__
+            bounds=f'{lamax},{lamin},{lomin},{lomax}';states,fr24_mode=_fetch_fr24(bounds,limit);ground=sum(1 for x in states if x.get('on_ground'))
+            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':fr24_mode,'scope':'viewport','total_count':len(states),'airborne_count':len(states)-ground,'ground_count':ground};_traffic_cache[('box',)+bucket]=(now,out);return out
+        except httpx.HTTPStatusError as e:fr24_error=f'HTTP {e.response.status_code}'
+        except Exception as e:fr24_error=type(e).__name__
     try:
         params={'lamin':lamin,'lomin':lomin,'lamax':lamax,'lomax':lomax}
-        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/0.7.1'}) as client:
-            r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
+        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.2'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
         states=[]
         for x in raw[:limit]:
             if len(x)<11 or x[5] is None or x[6] is None:continue
-            states.append({'id':x[0],'callsign':(x[1] or '').strip(),'flight':(x[1] or '').strip(),'country':x[2] or '', 'lon':x[5],'lat':x[6],
-                           'altitude_ft':int((x[7] or 0)*3.28084),'velocity_kts':round((x[9] or 0)*1.94384,1),'heading':x[10] or 0,'type':'','reg':'',
-                           'origin':'','destination':'','airline':'','on_ground':bool(x[8]),'phase':'ground' if bool(x[8]) else 'airborne'})
-        out={'source':'OpenSky','states':states,'licensed':False,'configured':bool(_fr24_token()),'real_only':True}
+            states.append({'id':x[0],'callsign':(x[1] or '').strip(),'flight':(x[1] or '').strip(),'country':x[2] or '','lon':x[5],'lat':x[6],'altitude_ft':int((x[7] or 0)*3.28084),'velocity_kts':round((x[9] or 0)*1.94384,1),'heading':x[10] or 0,'type':'','reg':'','origin':'','destination':'','airline':'','painted_as':'','operating_as':'','livery_airline':'','on_ground':bool(x[8]),'phase':'ground' if bool(x[8]) else 'airborne'})
+        ground=sum(1 for x in states if x.get('on_ground'));out={'source':'OpenSky','states':states,'licensed':False,'configured':bool(_fr24_token()),'real_only':True,'scope':'viewport','total_count':len(states),'airborne_count':len(states)-ground,'ground_count':ground}
         if fr24_error:out['fr24_error']=fr24_error
     except Exception:
-        out={'source':'unavailable','states':[],'licensed':False,'configured':bool(_fr24_token()),'real_only':True}
+        out={'source':'unavailable','states':[],'licensed':False,'configured':bool(_fr24_token()),'real_only':True,'scope':'viewport','total_count':0,'airborne_count':0,'ground_count':0}
         if fr24_error:out['fr24_error']=fr24_error
     _traffic_cache[('box',)+bucket]=(now,out);return out
 
@@ -1628,7 +1855,7 @@ def api_reset(request:Request):
             db.execute(delete(FlightRecord).where(FlightRecord.route_id.in_(route_ids)));db.execute(delete(RouteProgress).where(RouteProgress.route_id.in_(route_ids)));db.execute(delete(RouteSettings).where(RouteSettings.route_id.in_(route_ids)))
         if aircraft_ids:
             db.execute(delete(AircraftService).where(AircraftService.aircraft_id.in_(aircraft_ids)));db.execute(delete(AircraftLiveryDetail).where(AircraftLiveryDetail.aircraft_id.in_(aircraft_ids)))
-        db.execute(delete(SpecialContract).where(SpecialContract.user_id==u.id));db.execute(delete(SpecialBase).where(SpecialBase.user_id==u.id));db.execute(delete(CompanyResearch).where(CompanyResearch.user_id==u.id));db.execute(delete(ShopEntitlement).where(ShopEntitlement.user_id==u.id));db.execute(delete(AirlineAllianceMembership).where(AirlineAllianceMembership.user_id==u.id));db.execute(delete(HRPolicy).where(HRPolicy.user_id==u.id));db.execute(delete(IPOState).where(IPOState.user_id==u.id));db.execute(delete(GameWallet).where(GameWallet.user_id==u.id));db.execute(delete(Route).where(Route.user_id==u.id));db.execute(delete(Aircraft).where(Aircraft.user_id==u.id));db.execute(delete(HubAsset).where(HubAsset.user_id==u.id));db.execute(delete(HubUpgrade).where(HubUpgrade.user_id==u.id));db.execute(delete(HotelProperty).where(HotelProperty.user_id==u.id));db.execute(delete(Partner).where(Partner.user_id==u.id));db.execute(delete(MarketingCampaign).where(MarketingCampaign.user_id==u.id));db.execute(delete(Employee).where(Employee.user_id==u.id));db.execute(delete(Loan).where(Loan.user_id==u.id));db.execute(delete(FinanceTransaction).where(FinanceTransaction.user_id==u.id));db.execute(delete(UserHub).where(UserHub.user_id==u.id))
+        db.execute(delete(SpecialContract).where(SpecialContract.user_id==u.id));db.execute(delete(SpecialBase).where(SpecialBase.user_id==u.id));db.execute(delete(AllianceBenefitLog).where(AllianceBenefitLog.user_id==u.id));db.execute(delete(CompanyResearch).where(CompanyResearch.user_id==u.id));db.execute(delete(ShopEntitlement).where(ShopEntitlement.user_id==u.id));db.execute(delete(AirlineAllianceMembership).where(AirlineAllianceMembership.user_id==u.id));db.execute(delete(HRPolicy).where(HRPolicy.user_id==u.id));db.execute(delete(IPOState).where(IPOState.user_id==u.id));db.execute(delete(GameWallet).where(GameWallet.user_id==u.id));db.execute(delete(Route).where(Route.user_id==u.id));db.execute(delete(Aircraft).where(Aircraft.user_id==u.id));db.execute(delete(HubAsset).where(HubAsset.user_id==u.id));db.execute(delete(HubUpgrade).where(HubUpgrade.user_id==u.id));db.execute(delete(HotelProperty).where(HotelProperty.user_id==u.id));db.execute(delete(Partner).where(Partner.user_id==u.id));db.execute(delete(MarketingCampaign).where(MarketingCampaign.user_id==u.id));db.execute(delete(Employee).where(Employee.user_id==u.id));db.execute(delete(Loan).where(Loan.user_id==u.id));db.execute(delete(FinanceTransaction).where(FinanceTransaction.user_id==u.id));db.execute(delete(UserHub).where(UserHub.user_id==u.id))
         u.cash=180_000_000;u.reputation=50;u.hub_code='';u.last_settled=now_utc();db.commit();return {'ok':True}
 
 # ============================================================================
@@ -1647,18 +1874,20 @@ class PlayerAllianceContributionReq(BaseModel):
     amount:float
 class AllianceChatReq(BaseModel):
     message:str
+class AllianceGoalClaimReq(BaseModel):
+    goal_code:str
 
 SHOP_ITEMS=[
     {'code':'livery_airfrance','type':'livery','title':'Air France · livrée officielle (prototype privé)','subtitle':'Habillage Air France pour le studio de livrée','token_price':650,'cash_price':0,'image':'/static/liveries/airfrance-a350.jpg','premium':True},
-    {'code':'premium_a350','type':'aircraft_access','title':'Airbus A350 · accès premium','subtitle':'Déverrouille la sélection premium A350 dans la boutique','token_price':900,'cash_price':0,'image':'/static/aircraft/real/a350.jpg','premium':True},
+    {'code':'premium_a350','type':'aircraft_access','title':'Airbus A350 · accès premium','subtitle':'Déverrouille la sélection premium A350 dans la boutique','token_price':900,'cash_price':0,'image':'/static/aircraft/real/a350-neutral.svg','premium':True},
     {'code':'premium_b38m','type':'aircraft_access','title':'Boeing 737 MAX 8 · accès premium','subtitle':'Accès premium et fiche photo vérifiée','token_price':700,'cash_price':0,'image':'/static/aircraft/real/b737max8.jpg','premium':True},
     {'code':'pack_growth','type':'pack','title':'Pack Croissance','subtitle':'Capital + tokens pour accélérer une expansion sans contourner les prérequis','token_price':1200,'cash_price':8_000_000,'image':'/static/aircraft/real/a321neo.jpg','premium':False,'bonus_cash':12_000_000,'bonus_tokens':350},
-    {'code':'pack_flagship','type':'pack','title':'Pack Flagship','subtitle':'Capital + tokens pour développer un hub majeur','token_price':2600,'cash_price':18_000_000,'image':'/static/aircraft/real/a350.jpg','premium':True,'bonus_cash':28_000_000,'bonus_tokens':900},
+    {'code':'pack_flagship','type':'pack','title':'Pack Flagship','subtitle':'Capital + tokens pour développer un hub majeur','token_price':2600,'cash_price':18_000_000,'image':'/static/aircraft/real/a350-neutral.svg','premium':True,'bonus_cash':28_000_000,'bonus_tokens':900},
 ]
 AIRLINE_ALLIANCES={
-    'skyteam':{'code':'skyteam','name':'SkyTeam','logo':'/static/brands/skyteam.svg','min_level':30,'description':'Codeshare, salons partenaires et bonus de correspondance.'},
-    'star':{'code':'star','name':'Star Alliance','logo':'/static/brands/staralliance.svg','min_level':30,'description':'Réseau mondial, connexions protégées et coopération commerciale.'},
-    'oneworld':{'code':'oneworld','name':'oneworld','logo':'/static/brands/oneworld.svg','min_level':30,'description':'Réseau premium, salons et accords de partage de code.'},
+    'skyteam':{'code':'skyteam','name':'SkyTeam','logo':'/static/brands/skyteam.svg','min_level':30,'description':'Codeshare, formation mutualisée et stimulation des correspondances.','bonuses':{'training':-3,'route_creation':-4,'demand':2}},
+    'star':{'code':'star','name':'Star Alliance','logo':'/static/brands/staralliance.svg','min_level':30,'description':'Achats groupés, carburant et coopération technique mondiale.','bonuses':{'fuel':-3,'maintenance':-3,'aircraft_purchase':-1}},
+    'oneworld':{'code':'oneworld','name':'oneworld','logo':'/static/brands/oneworld.svg','min_level':30,'description':'Réseau premium, accords commerciaux et coûts d’expansion réduits.','bonuses':{'aircraft_purchase':-2,'route_creation':-4,'demand':1}},
 }
 
 def wallet_for(db,user_id):
@@ -1699,22 +1928,61 @@ def api_shop_purchase(req:ShopPurchaseReq,request:Request):
         db.commit();return {'ok':True,'tokens':w.tokens,'cash':u.cash,'item_code':item['code'],'bonus_cash':bonus_cash,'bonus_tokens':bonus_tokens}
 
 
+def _alliance_network_payload(db,alliance,current_user_id=None):
+    member_rows=db.scalars(select(PlayerAllianceMember).where(PlayerAllianceMember.alliance_id==alliance.id)).all();member_ids=[m.user_id for m in member_rows]
+    users={uid:db.get(User,uid) for uid in member_ids};hubs=[];routes=[];hub_idents=set();countries=set()
+    for uid in member_ids:
+        mu=users.get(uid);owner=mu.company_name if mu else f'Compagnie {uid}'
+        for h in db.scalars(select(UserHub).where(UserHub.user_id==uid)).all():
+            a=airport_detail(h.airport_ident)
+            if not a:continue
+            hub_idents.add(h.airport_ident);countries.add(a.get('country') or '')
+            hubs.append({'user_id':uid,'owner':owner,'ident':h.airport_ident,'code':a['code'],'name':a['name'],'lat':a['lat'],'lon':a['lon'],'country':a.get('country') or '','is_primary':h.is_primary,'mine':uid==current_user_id})
+    for uid in member_ids:
+        mu=users.get(uid);owner=mu.company_name if mu else f'Compagnie {uid}'
+        for r in db.scalars(select(Route).where(Route.user_id==uid)).all():
+            o=airport_detail(r.origin);d=airport_detail(r.destination)
+            if not o or not d:continue
+            countries.add(o.get('country') or '');countries.add(d.get('country') or '')
+            routes.append({'id':r.id,'user_id':uid,'owner':owner,'mine':uid==current_user_id,'origin_ident':r.origin,'destination_ident':r.destination,'origin':o['code'],'destination':d['code'],'origin_lat':o['lat'],'origin_lon':o['lon'],'destination_lat':d['lat'],'destination_lon':d['lon'],'connection':r.destination in hub_idents})
+    return {'hubs':hubs[:250],'routes':routes[:800],'countries':len([x for x in countries if x]),'connections':sum(1 for r in routes if r['connection'])}
+
+def _alliance_goals_payload(db,alliance,network=None):
+    network=network or _alliance_network_payload(db,alliance);member_ids=[x for (x,) in db.execute(select(PlayerAllianceMember.user_id).where(PlayerAllianceMember.alliance_id==alliance.id)).all()]
+    now=now_utc();week_start=now-timedelta(days=7);iso=now.isocalendar();period_key=f'{iso.year}-W{iso.week:02d}'
+    passengers=0
+    if member_ids:passengers=db.scalar(select(func.sum(FlightRecord.passengers)).where(FlightRecord.user_id.in_(member_ids),FlightRecord.completed_at>=week_start)) or 0
+    savings=db.scalar(select(func.sum(AllianceBenefitLog.saved_amount)).where(AllianceBenefitLog.alliance_id==alliance.id,AllianceBenefitLog.created_at>=week_start)) or 0
+    metrics={'passengers':int(passengers),'countries':network.get('countries',0),'routes':len(network.get('routes',[])),'connections':network.get('connections',0),'savings':round(float(savings),2)}
+    claimed={x.goal_code for x in db.scalars(select(AllianceGoalClaim).where(AllianceGoalClaim.alliance_id==alliance.id,AllianceGoalClaim.period_key==period_key)).all()}
+    goals=[]
+    for cfg in ALLIANCE_WEEKLY_GOALS:
+        value=metrics.get(cfg['metric'],0);target=cfg['target'];goals.append({**cfg,'value':value,'progress':round(min(100,(value/target*100) if target else 100),1),'complete':value>=target,'claimed':cfg['code'] in claimed,'period_key':period_key})
+    return goals
+
 def player_alliance_payload(db,u):
     member=db.scalar(select(PlayerAllianceMember).where(PlayerAllianceMember.user_id==u.id))
     if not member:return None
     a=db.get(PlayerAlliance,member.alliance_id)
     if not a:return None
-    rows=db.scalars(select(PlayerAllianceMember).where(PlayerAllianceMember.alliance_id==a.id).order_by(PlayerAllianceMember.contribution.desc())).all()
+    rows=db.scalars(select(PlayerAllianceMember).where(PlayerAllianceMember.alliance_id==a.id).order_by(PlayerAllianceMember.contribution.desc())).all();member_ids=[m.user_id for m in rows]
+    since=now_utc()-timedelta(days=30);savings_by_user={}
+    if member_ids:
+        for uid,total in db.execute(select(AllianceBenefitLog.user_id,func.sum(AllianceBenefitLog.saved_amount)).where(AllianceBenefitLog.alliance_id==a.id,AllianceBenefitLog.user_id.in_(member_ids),AllianceBenefitLog.created_at>=since).group_by(AllianceBenefitLog.user_id)).all():savings_by_user[uid]=float(total or 0)
     members=[]
     for m in rows:
-        mu=db.get(User,m.user_id)
-        members.append({'user_id':m.user_id,'username':mu.username if mu else f'Pilote {m.user_id}','company_name':mu.company_name if mu else 'Compagnie','role':m.role,'contribution':m.contribution})
-    msgs=db.scalars(select(AllianceMessage).where(AllianceMessage.alliance_id==a.id).order_by(AllianceMessage.created_at.desc()).limit(40)).all()
-    chat=[]
+        mu=db.get(User,m.user_id);route_count=db.scalar(select(func.count()).select_from(Route).where(Route.user_id==m.user_id)) or 0
+        pax=db.scalar(select(func.sum(FlightRecord.passengers)).where(FlightRecord.user_id==m.user_id,FlightRecord.completed_at>=since)) or 0
+        members.append({'user_id':m.user_id,'username':mu.username if mu else f'Pilote {m.user_id}','company_name':mu.company_name if mu else 'Compagnie','role':m.role,'contribution':m.contribution,'routes':route_count,'passengers_30d':int(pax),'savings_30d':round(savings_by_user.get(m.user_id,0),2)})
+    msgs=db.scalars(select(AllianceMessage).where(AllianceMessage.alliance_id==a.id).order_by(AllianceMessage.created_at.desc()).limit(40)).all();chat=[]
     for m in reversed(msgs):
-        mu=db.get(User,m.user_id)
-        chat.append({'id':m.id,'username':mu.username if mu else 'Membre','message':m.message,'created_at':m.created_at.isoformat() if m.created_at else ''})
-    return {'id':a.id,'name':a.name,'tag':a.tag,'role':member.role,'treasury':a.treasury,'xp':a.xp,'members':members,'chat':chat,'member_count':len(members)}
+        mu=db.get(User,m.user_id);chat.append({'id':m.id,'username':mu.username if mu else 'Membre','message':m.message,'created_at':m.created_at.isoformat() if m.created_at else ''})
+    network=_alliance_network_payload(db,a,u.id);goals=_alliance_goals_payload(db,a,network);level=player_alliance_level(a.xp)
+    monthly_savings=db.scalar(select(func.sum(AllianceBenefitLog.saved_amount)).where(AllianceBenefitLog.alliance_id==a.id,AllianceBenefitLog.created_at>=since)) or 0
+    activity=[]
+    for log in db.scalars(select(AllianceBenefitLog).where(AllianceBenefitLog.alliance_id==a.id).order_by(AllianceBenefitLog.created_at.desc()).limit(12)).all():
+        mu=db.get(User,log.user_id);activity.append({'kind':'saving','user':mu.username if mu else 'Membre','label':log.label or log.category,'amount':round(log.saved_amount,2),'created_at':log.created_at.isoformat() if log.created_at else ''})
+    return {'id':a.id,'name':a.name,'tag':a.tag,'role':member.role,'treasury':a.treasury,'xp':a.xp,'level':level['level'],'xp_floor':level['xp'],'xp_next':level['next_xp'],'maxed':level['maxed'],'active_bonuses':level.get('bonuses',{}),'members':members,'chat':chat,'member_count':len(members),'monthly_savings':round(float(monthly_savings),2),'network':network,'goals':goals,'activity':activity}
 
 @app.get('/api/alliances')
 def api_alliances(request:Request):
@@ -1728,9 +1996,9 @@ def api_alliances(request:Request):
         for a in db.scalars(select(PlayerAlliance).order_by(PlayerAlliance.xp.desc(),PlayerAlliance.treasury.desc()).limit(30)).all():
             count=db.scalar(select(func.count()).select_from(PlayerAllianceMember).where(PlayerAllianceMember.alliance_id==a.id)) or 0
             founder=db.get(User,a.founder_user_id)
-            publics.append({'id':a.id,'name':a.name,'tag':a.tag,'members':count,'treasury':a.treasury,'xp':a.xp,'founder':founder.username if founder else '—'})
+            lvl=player_alliance_level(a.xp);publics.append({'id':a.id,'name':a.name,'tag':a.tag,'members':count,'treasury':a.treasury,'xp':a.xp,'level':lvl['level'],'founder':founder.username if founder else '—'})
         return {'airline_alliances':airline,'airline_membership':am.alliance_code if am else '',
-                'player_alliance':player_alliance_payload(db,u),'public_player_alliances':publics,'level':pr['level']}
+                'player_alliance':player_alliance_payload(db,u),'public_player_alliances':publics,'level':pr['level'],'modifiers':company_modifier_payload(db,u,progress=pr)}
 
 @app.post('/api/alliances/airline/join')
 def api_airline_alliance_join(req:AirlineAllianceJoinReq,request:Request):
@@ -1776,7 +2044,7 @@ def api_player_alliance_leave(request:Request):
         if m.role=='founder':
             count=db.scalar(select(func.count()).select_from(PlayerAllianceMember).where(PlayerAllianceMember.alliance_id==a.id)) or 0
             if count>1:raise HTTPException(400,'Le fondateur doit rester tant que d’autres membres sont présents')
-            db.execute(delete(AllianceMessage).where(AllianceMessage.alliance_id==a.id));db.delete(m);db.delete(a)
+            db.execute(delete(AllianceMessage).where(AllianceMessage.alliance_id==a.id));db.execute(delete(AllianceGoalClaim).where(AllianceGoalClaim.alliance_id==a.id));db.execute(delete(AllianceBenefitLog).where(AllianceBenefitLog.alliance_id==a.id));db.delete(m);db.delete(a)
         else:db.delete(m)
         db.commit();return {'ok':True}
 
@@ -1789,6 +2057,18 @@ def api_player_alliance_contribute(req:PlayerAllianceContributionReq,request:Req
         if not m:raise HTTPException(400,'Aucune alliance')
         if u.cash<amount:raise HTTPException(400,'Fonds insuffisants')
         a=db.get(PlayerAlliance,m.alliance_id);u.cash-=amount;m.contribution+=amount;a.treasury+=amount;a.xp+=int(amount/5000);log_tx(db,u.id,'alliance',f'Contribution alliance {a.name}',-amount);db.commit();return {'ok':True,'treasury':a.treasury,'xp':a.xp}
+
+@app.post('/api/alliances/goals/claim')
+def api_alliance_goal_claim(req:AllianceGoalClaimReq,request:Request):
+    with SessionLocal() as db:
+        u=require_user(request,db);m=db.scalar(select(PlayerAllianceMember).where(PlayerAllianceMember.user_id==u.id))
+        if not m:raise HTTPException(400,'Aucune alliance de joueurs')
+        a=db.get(PlayerAlliance,m.alliance_id);network=_alliance_network_payload(db,a,u.id);goals=_alliance_goals_payload(db,a,network);goal=next((g for g in goals if g['code']==req.goal_code),None)
+        if not goal:raise HTTPException(404,'Objectif inconnu')
+        if goal['claimed']:raise HTTPException(400,'Récompense déjà récupérée cette semaine')
+        if not goal['complete']:raise HTTPException(400,'Objectif collectif non terminé')
+        a.xp+=int(goal['xp_reward']);a.treasury+=float(goal['cash_reward']);db.add(AllianceGoalClaim(alliance_id=a.id,goal_code=goal['code'],period_key=goal['period_key'],claimed_by_user_id=u.id,xp_reward=int(goal['xp_reward']),cash_reward=float(goal['cash_reward'])));db.commit()
+        return {'ok':True,'xp':a.xp,'treasury':a.treasury,'reward':{'xp':goal['xp_reward'],'cash':goal['cash_reward']}}
 
 @app.post('/api/alliances/chat')
 def api_alliance_chat(req:AllianceChatReq,request:Request):
@@ -1830,10 +2110,15 @@ class ResearchUpgradeReq(BaseModel):
 @app.get('/api/research')
 def api_research(request:Request):
     with SessionLocal() as db:
-        u=require_user(request,db);pr=career_progress(db,u);levels=research_levels(db,u.id);items=[]
+        u=require_user(request,db);pr=career_progress(db,u);levels=research_levels(db,u.id);items=[];mods=company_modifier_payload(db,u,levels=levels,progress=pr)
         for code,cfg in RESEARCH_PROJECTS.items():
             lvl=levels.get(code,0);price=int(cfg['base_cost']*(1.65**lvl));items.append({'code':code,**cfg,'level':lvl,'price':price,'available':pr['level']>=cfg['min_level'],'maxed':lvl>=cfg['max']})
-        return {'level':pr['level'],'items':items,'fuel_cost_factor':research_cost_factor(db,u.id,{'description':'L2J','category':'Jet'}),'turboprop_cost_factor':research_cost_factor(db,u.id,{'description':'L2T','category':'Turbopropulseur'})}
+        fuel_extra=mods['totals'].get('fuel',0)
+        return {'level':pr['level'],'items':items,'era':mods['era'],'modifiers':mods,
+                'fuel_cost_factor':research_cost_factor(db,u.id,{'description':'L2J','category':'Jet'},levels,fuel_extra),
+                'turboprop_cost_factor':research_cost_factor(db,u.id,{'description':'L2T','category':'Turbopropulseur'},levels,fuel_extra),
+                'maintenance_cost_factor':modifier_factor(mods,'maintenance'),'route_creation_factor':modifier_factor(mods,'route_creation'),
+                'aircraft_purchase_factor':modifier_factor(mods,'aircraft_purchase'),'training_factor':modifier_factor(mods,'training')}
 
 @app.post('/api/research/upgrade')
 def api_research_upgrade(req:ResearchUpgradeReq,request:Request):

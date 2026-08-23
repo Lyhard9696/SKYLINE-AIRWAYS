@@ -322,6 +322,32 @@ class AllianceMessage(Base):
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
 
 
+class AllianceBenefitLog(Base):
+    __tablename__='alliance_benefit_logs_v12'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    alliance_id: Mapped[int | None]=mapped_column(ForeignKey('player_alliances_v11.id'),nullable=True,index=True)
+    source: Mapped[str]=mapped_column(String(48),default='alliance')
+    category: Mapped[str]=mapped_column(String(48),index=True)
+    base_amount: Mapped[float]=mapped_column(Float,default=0)
+    final_amount: Mapped[float]=mapped_column(Float,default=0)
+    saved_amount: Mapped[float]=mapped_column(Float,default=0)
+    label: Mapped[str]=mapped_column(String(160),default='')
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
+
+class AllianceGoalClaim(Base):
+    __tablename__='alliance_goal_claims_v12'
+    __table_args__=(UniqueConstraint('alliance_id','goal_code','period_key',name='uq_v12_alliance_goal_period'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    alliance_id: Mapped[int]=mapped_column(ForeignKey('player_alliances_v11.id'),index=True)
+    goal_code: Mapped[str]=mapped_column(String(64),index=True)
+    period_key: Mapped[str]=mapped_column(String(24),index=True)
+    claimed_by_user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    xp_reward: Mapped[int]=mapped_column(Integer,default=0)
+    cash_reward: Mapped[float]=mapped_column(Float,default=0)
+    claimed_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
+
+
 class HRPolicy(Base):
     __tablename__='hr_policies_v11'
     user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),primary_key=True)
