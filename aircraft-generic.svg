@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420">
+  <rect width="900" height="420" rx="24" fill="#f7fafc"/>
+  <path d="M93 225c0-17 15-31 34-33l236-29 87-94c8-9 21-13 34-10l20 5-48 96 166-20 96-77c8-7 20-9 30-5l18 8-63 66 83-10c38-5 71 21 76 58s-22 70-60 74l-313 26-71 103-30 4 32-101-191 16-67 54-28 2 37-56-48-1c-34-1-60-25-60-56Z" fill="#cad6df"/>
+  <path d="M100 224c141 10 300 8 471-8 90-8 174-21 250-38" fill="none" stroke="#8da3b2" stroke-width="5" opacity=".45"/>
+  <text x="450" y="385" text-anchor="middle" font-family="Arial,sans-serif" font-size="26" fill="#6e8391">AÉRONEF · PHOTO EXACTE NON DISPONIBLE</text>
+</svg>
