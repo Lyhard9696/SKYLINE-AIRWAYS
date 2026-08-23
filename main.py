@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 
 from models import (Base, User, CompanyProfile, UserHub, HubUpgrade, Aircraft, Route,
     Employee, RouteSettings, AircraftService, AircraftLiveryDetail, FlightRecord, RouteProgress,
-    FinanceTransaction, Loan, MarketingCampaign, Partner, HotelProperty, HubAsset, DailyQuestClaim, BankLoanV6)
+    FinanceTransaction, Loan, MarketingCampaign, Partner, HotelProperty, HubAsset, DailyQuestClaim, BankLoanV6, SpecialBase, SpecialContract)
 from catalog import (
     search_airports, airport_detail, major_airports, search_aircraft, aircraft_detail,
     aircraft_manufacturers, search_airlines, longest_runway_m
@@ -36,7 +36,7 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='0.7.1')
+app=FastAPI(title='SKYLINE AIRWAYS',version='0.8.1')
 app.mount('/static',StaticFiles(directory=os.path.join(APP_DIR,'static')),name='static')
 templates=Jinja2Templates(directory=os.path.join(APP_DIR,'templates'))
 signer=URLSafeSerializer(SECRET_KEY,salt='skyline-v4')
@@ -490,7 +490,7 @@ def daily_quests(db,u):
 
 # -------- Page routes --------
 @app.get('/health')
-def health():return {'status':'ok','version':'0.6','catalog':'85k+ airports / 591 aircraft types','sim_speed':SIM_SPEED}
+def health():return {'status':'ok','version':'0.8.1','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
 
 @app.get('/')
 def root(request:Request):
@@ -570,6 +570,8 @@ class HotelReq(BaseModel):airport_ident:str;name:str='SKYLINE Hotel';stars:int=3
 class HotelUpgradeReq(BaseModel):hotel_id:int
 class HotelPartnerReq(BaseModel):offer_key:str
 class HubAssetBuyReq(BaseModel):ident:str;asset_key:str;kind:str;name:str='';lon:float;lat:float
+class SpecialBaseReq(BaseModel):airport_ident:str;branch:str
+class SpecialContractReq(BaseModel):contract_code:str;base_id:int
 
 # -------- Catalog APIs --------
 @app.get('/api/airports/search')
@@ -585,7 +587,7 @@ def api_airport_detail(ident:str):
     return d
 
 @app.get('/api/aircraft/catalog')
-def api_aircraft_catalog(q:str='',manufacturer:str='',commercial_only:bool=True,limit:int=60,offset:int=0):
+def api_aircraft_catalog(q:str='',manufacturer:str='',commercial_only:bool=False,limit:int=60,offset:int=0):
     return {'items':search_aircraft(q,manufacturer,commercial_only,limit=limit,offset=offset),'manufacturers':aircraft_manufacturers()}
 
 @app.get('/api/aircraft/catalog/{code}')
@@ -696,7 +698,10 @@ def api_buy_aircraft(req:AircraftBuyReq,request:Request):
     if not spec:raise HTTPException(404,'Type avion inconnu')
     if req.acquisition not in ('buy','lease'):raise HTTPException(400,'Mode d’acquisition invalide')
     with SessionLocal() as db:
-        u=require_user(request,db);hub=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==req.home_hub))
+        u=require_user(request,db);pr=career_progress(db,u)
+        min_level=int(spec.get('min_level') or 1)
+        if pr['level']<min_level:raise HTTPException(400,f"Niveau {min_level} requis pour cet appareil spécialisé (niveau actuel {pr['level']}).")
+        hub=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==req.home_hub))
         if not hub:raise HTTPException(400,'Base non possédée')
         price=spec['price'] if req.acquisition=='buy' else spec['lease']
         if u.cash<price:raise HTTPException(400,'Fonds insuffisants')
@@ -1113,10 +1118,33 @@ def api_weather(lat:float,lon:float):
         out={'ok':False,'current':{},'source':'unavailable'}
     _weather_cache[key]=(now,out);return out
 
+
+@app.get('/api/weather/radar')
+def api_weather_radar(request:Request):
+    # Proxy the RainViewer metadata server-side so browser CORS/ad blockers do not
+    # silently kill the weather layer. No long-term weather data is persisted.
+    with SessionLocal() as db:require_user(request,db)
+    now=time.time();key=('rainviewer','metadata');cached=_weather_cache.get(key)
+    if cached and now-cached[0] < 120:return cached[1]
+    try:
+        with httpx.Client(timeout=6.0,headers={'User-Agent':'SKYLINE-Airways/0.8'}) as client:
+            r=client.get('https://api.rainviewer.com/public/weather-maps.json');r.raise_for_status();d=r.json()
+        frame=((d.get('radar') or {}).get('past') or [])
+        frame=frame[-1] if frame else None
+        out={'ok':bool(frame),'source':'RainViewer','host':d.get('host',''),'path':(frame or {}).get('path',''),'generated':(frame or {}).get('time')}
+    except Exception as e:
+        out={'ok':False,'source':'RainViewer','reason':type(e).__name__}
+    _weather_cache[key]=(now,out);return out
+
 FR24_BASE_URL=os.getenv('FR24_API_BASE_URL','https://fr24api.flightradar24.com/api').rstrip('/')
 
 def _fr24_token():
-    return os.getenv('FR24_API_TOKEN','').strip()
+    # Primary key plus compatible aliases to avoid a silent failure when the secret
+    # was already created in Render under a different obvious name.
+    for key in ('FR24_API_TOKEN','FLIGHTRADAR24_API_TOKEN','FLIGHTRADAR_TOKEN','FR24_TOKEN'):
+        value=os.getenv(key,'').strip()
+        if value:return value
+    return ''
 
 def _fr24_headers():
     return {
@@ -1169,16 +1197,27 @@ def _fetch_fr24(bounds,limit=120,airport=None):
     token=_fr24_token()
     if not token:raise RuntimeError('FR24_API_TOKEN absent')
     headers=_fr24_headers()
+    last_error=None
     with httpx.Client(timeout=9.0,headers=headers) as client:
-        r=client.get(f'{FR24_BASE_URL}/live/flight-positions/full',params={'bounds':bounds,'limit':max(1,min(180,int(limit)))})
-        r.raise_for_status()
-        raw=r.json().get('data') or []
-    states=[]
-    for x in raw:
-        n=_fr24_normalize(x,airport)
-        if n:states.append(n)
-    if airport:states.sort(key=lambda x:(x.get('distance_km') is None,x.get('distance_km') or 9999))
-    return states
+        for mode in ('full','light'):
+            try:
+                r=client.get(f'{FR24_BASE_URL}/live/flight-positions/{mode}',params={'bounds':bounds,'limit':max(1,min(180,int(limit)))})
+                r.raise_for_status()
+                raw=r.json().get('data') or []
+                states=[]
+                for x in raw:
+                    n=_fr24_normalize(x,airport)
+                    if n:states.append(n)
+                if airport:states.sort(key=lambda x:(x.get('distance_km') is None,x.get('distance_km') or 9999))
+                return states,mode
+            except httpx.HTTPStatusError as e:
+                last_error=e
+                # Some FR24 plans expose light but not full. Try light before falling back.
+                if mode=='full' and e.response.status_code in (401,402,403,404,429):
+                    continue
+                raise
+    if last_error:raise last_error
+    return [],'full'
 
 def _opensky_hub(a,span):
     params={'lamin':a['lat']-span,'lomin':a['lon']-span,'lamax':a['lat']+span,'lomax':a['lon']+span}
@@ -1202,6 +1241,27 @@ def api_fr24_status(request:Request):
     return {'configured':configured,'provider':'Flightradar24 API' if configured else 'OpenSky fallback',
             'api_version':'v1','secret_location':'server environment','token_exposed':False}
 
+
+@app.get('/api/integrations/fr24/test')
+def api_fr24_test(request:Request,ident:str='CDG'):
+    with SessionLocal() as db:require_user(request,db)
+    if not _fr24_token():
+        return {'ok':False,'configured':False,'provider':'Flightradar24','reason':'FR24_API_TOKEN absent dans l’environnement Render.'}
+    a=airport_detail(ident)
+    if not a:raise HTTPException(404,'Aéroport introuvable')
+    span=.12
+    bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}"
+    try:
+        states,mode=_fetch_fr24(bounds,25,a)
+        return {'ok':True,'configured':True,'provider':'Flightradar24','mode':mode,'airport':a['code'],
+                'count':len(states),'ground_count':sum(1 for x in states if x.get('on_ground')),
+                'message':'Connexion FR24 valide. Les positions brutes ne sont pas stockées.'}
+    except httpx.HTTPStatusError as e:
+        return {'ok':False,'configured':True,'provider':'Flightradar24','status_code':e.response.status_code,
+                'reason':'Clé refusée, crédit/plan insuffisant, ou endpoint non autorisé.'}
+    except Exception as e:
+        return {'ok':False,'configured':True,'provider':'Flightradar24','reason':type(e).__name__}
+
 @app.get('/api/live-traffic')
 def api_live_traffic(ident:str):
     """Traffic around one airport. FR24 is preferred here as well as on the globe."""
@@ -1214,9 +1274,9 @@ def api_live_traffic(ident:str):
     if _fr24_token():
         try:
             bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}"
-            states=_fetch_fr24(bounds,120,a)
+            states,fr24_mode=_fetch_fr24(bounds,120,a)
             out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,
-                 'ground_count':sum(1 for x in states if x.get('on_ground')),'nearby_count':len(states),'real_only':True}
+                 'ground_count':sum(1 for x in states if x.get('on_ground')),'nearby_count':len(states),'real_only':True,'fr24_mode':fr24_mode}
             _traffic_cache[key]=(now,out);return out
         except httpx.HTTPStatusError as e:
             fr24_error=f'HTTP {e.response.status_code}'
@@ -1241,8 +1301,8 @@ def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:i
     if _fr24_token():
         try:
             bounds=f'{lamax},{lamin},{lomin},{lomax}'
-            states=_fetch_fr24(bounds,limit)
-            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True}
+            states,fr24_mode=_fetch_fr24(bounds,limit)
+            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':fr24_mode}
             _traffic_cache[('box',)+bucket]=(now,out);return out
         except httpx.HTTPStatusError as e:
             fr24_error=f'HTTP {e.response.status_code}'
@@ -1264,6 +1324,89 @@ def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:i
         out={'source':'unavailable','states':[],'licensed':False,'configured':bool(_fr24_token()),'real_only':True}
         if fr24_error:out['fr24_error']=fr24_error
     _traffic_cache[('box',)+bucket]=(now,out);return out
+
+
+SPECIAL_BRANCHES={
+    'sar':{'label':'Secours héliporté / SAR','min_level':61,'base_cost':18_000_000,'icon':'🚁',
+           'desc':'Medevac, secours montagne et maritime, missions automatiques H24.'},
+    'fire':{'label':'Sécurité civile / incendies','min_level':66,'base_cost':28_000_000,'icon':'🛩️',
+            'desc':'Bases bombardiers d’eau, remplissage, maintenance et contrats saisonniers.'},
+    'gendarmerie':{'label':'Gendarmerie / service public','min_level':71,'base_cost':24_000_000,'icon':'🚁',
+                   'desc':'Couverture territoriale, disponibilité H24 et interventions automatisées.'},
+    'government':{'label':'Contrats gouvernementaux','min_level':76,'base_cost':38_000_000,'icon':'🏛️',
+                  'desc':'Transport d’État, logistique et missions internationales.'},
+    'defense':{'label':'Défense du territoire','min_level':81,'base_cost':75_000_000,'icon':'🛡️',
+               'desc':'Gestion stratégique de transport, surveillance, ravitaillement et disponibilité. Aucun combat pilotable.'},
+}
+SPECIAL_CONTRACT_TEMPLATES=[
+    {'code':'pt_fire_summer','branch':'fire','title':'Soutien incendies – Portugal','country':'Portugal','reward':5_850_000,'days':14,'min_level':66,'aircraft':['CL2T'],'required_count':2},
+    {'code':'fr_sar_h24','branch':'sar','title':'Couverture secours H24','country':'France','reward':3_200_000,'days':10,'min_level':61,'aircraft':['EC45','A139'],'required_count':2},
+    {'code':'med_sar','branch':'sar','title':'Surveillance & secours maritime','country':'Méditerranée','reward':4_100_000,'days':12,'min_level':63,'aircraft':['EC45','A139'],'required_count':1},
+    {'code':'public_h24','branch':'gendarmerie','title':'Disponibilité service public H24','country':'France','reward':4_800_000,'days':14,'min_level':71,'aircraft':['EC45','NH90'],'required_count':2},
+    {'code':'gov_airlift','branch':'government','title':'Pont aérien gouvernemental','country':'International','reward':8_500_000,'days':14,'min_level':76,'aircraft':['A400','C30J'],'required_count':2},
+    {'code':'territory_readiness','branch':'defense','title':'Disponibilité stratégique territoriale','country':'Europe','reward':12_000_000,'days':14,'min_level':81,'aircraft':['A400','C30J','RFAL','MQ9'],'required_count':3},
+]
+
+@app.get('/api/special-ops')
+def api_special_ops(request:Request):
+    with SessionLocal() as db:
+        u=require_user(request,db);pr=career_progress(db,u)
+        bases=db.scalars(select(SpecialBase).where(SpecialBase.user_id==u.id).order_by(SpecialBase.id)).all()
+        contracts=db.scalars(select(SpecialContract).where(SpecialContract.user_id==u.id).order_by(SpecialContract.id.desc())).all()
+        base_out=[{'id':b.id,'airport_ident':b.airport_ident,'branch':b.branch,'name':b.name,'level':b.level,'purchase_price':b.purchase_price} for b in bases]
+        owned_by_branch={b.branch for b in bases}
+        items=[]
+        for code,meta in SPECIAL_BRANCHES.items():
+            m=dict(meta);m['code']=code;m['unlocked']=pr['level']>=meta['min_level'];m['owned']=code in owned_by_branch
+            m['reason']='Disponible' if m['unlocked'] else f"Niveau {meta['min_level']} requis (actuel {pr['level']})"
+            items.append(m)
+        fleet_types=[x for (x,) in db.execute(select(Aircraft.type_icao).where(Aircraft.user_id==u.id)).all()]
+        ct=[]
+        for t in SPECIAL_CONTRACT_TEMPLATES:
+            row=dict(t);row['unlocked']=pr['level']>=t['min_level'];row['has_base']=t['branch'] in owned_by_branch
+            row['compatible_aircraft_count']=sum(1 for code in fleet_types if code in t['aircraft'])
+            row['fleet_ready']=row['compatible_aircraft_count']>=t.get('required_count',1)
+            row['active']=any(c.contract_code==t['code'] and c.status=='active' for c in contracts)
+            ct.append(row)
+        active=[{'id':c.id,'title':c.title,'country':c.country,'branch':c.branch,'reward':c.reward,'status':c.status,
+                 'ends_at':c.ends_at.isoformat() if c.ends_at else None} for c in contracts[:20]]
+        return {'level':pr['level'],'branches':items,'bases':base_out,'contracts':ct,'active_contracts':active}
+
+@app.post('/api/special-ops/base')
+def api_special_base(req:SpecialBaseReq,request:Request):
+    with SessionLocal() as db:
+        u=require_user(request,db);pr=career_progress(db,u);meta=SPECIAL_BRANCHES.get(req.branch)
+        if not meta:raise HTTPException(404,'Branche spécialisée inconnue')
+        if pr['level']<meta['min_level']:raise HTTPException(400,f"Niveau {meta['min_level']} requis")
+        h=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==req.airport_ident))
+        if not h:raise HTTPException(400,'Cette base doit être construite sur un hub possédé.')
+        existing=db.scalar(select(SpecialBase).where(SpecialBase.user_id==u.id,SpecialBase.airport_ident==req.airport_ident,SpecialBase.branch==req.branch))
+        if existing:return {'ok':True,'base_id':existing.id,'already_owned':True}
+        cost=meta['base_cost']
+        if u.cash<cost:raise HTTPException(400,'Trésorerie insuffisante')
+        u.cash-=cost;b=SpecialBase(user_id=u.id,airport_ident=req.airport_ident,branch=req.branch,name=f"{meta['label']} · {req.airport_ident}",purchase_price=cost)
+        db.add(b);log_tx(db,u.id,'special_base',f"Base spécialisée · {meta['label']}",-cost);db.commit();db.refresh(b)
+        return {'ok':True,'base_id':b.id,'cash':u.cash}
+
+@app.post('/api/special-ops/contract')
+def api_special_contract(req:SpecialContractReq,request:Request):
+    with SessionLocal() as db:
+        u=require_user(request,db);pr=career_progress(db,u);t=next((x for x in SPECIAL_CONTRACT_TEMPLATES if x['code']==req.contract_code),None)
+        if not t:raise HTTPException(404,'Contrat inconnu')
+        if pr['level']<t['min_level']:raise HTTPException(400,f"Niveau {t['min_level']} requis")
+        base=db.get(SpecialBase,req.base_id)
+        if not base or base.user_id!=u.id or base.branch!=t['branch']:raise HTTPException(400,'Base spécialisée compatible requise')
+        fleet_types=[x for (x,) in db.execute(select(Aircraft.type_icao).where(Aircraft.user_id==u.id)).all()]
+        compatible=sum(1 for code in fleet_types if code in t['aircraft'])
+        if compatible < t.get('required_count',1):
+            raise HTTPException(400,f"Flotte compatible insuffisante : {t.get('required_count',1)} appareil(s) requis parmi {', '.join(t['aircraft'])}.")
+        existing=db.scalar(select(SpecialContract).where(SpecialContract.user_id==u.id,SpecialContract.contract_code==t['code'],SpecialContract.status=='active'))
+        if existing:return {'ok':True,'contract_id':existing.id,'already_active':True}
+        # Contract engine is strategic: dispatch and mission execution are automatic.
+        c=SpecialContract(user_id=u.id,base_id=base.id,contract_code=t['code'],branch=t['branch'],title=t['title'],country=t['country'],
+                          reward=t['reward'],ends_at=now_utc()+timedelta(days=t['days']))
+        db.add(c);db.commit();db.refresh(c)
+        return {'ok':True,'contract_id':c.id,'status':'active','message':'Contrat activé. Dispatch automatique par OPS.'}
 
 _surface_cache=BoundedCache(2)
 
@@ -1348,5 +1491,5 @@ def api_reset(request:Request):
             db.execute(delete(FlightRecord).where(FlightRecord.route_id.in_(route_ids)));db.execute(delete(RouteProgress).where(RouteProgress.route_id.in_(route_ids)));db.execute(delete(RouteSettings).where(RouteSettings.route_id.in_(route_ids)))
         if aircraft_ids:
             db.execute(delete(AircraftService).where(AircraftService.aircraft_id.in_(aircraft_ids)));db.execute(delete(AircraftLiveryDetail).where(AircraftLiveryDetail.aircraft_id.in_(aircraft_ids)))
-        db.execute(delete(Route).where(Route.user_id==u.id));db.execute(delete(Aircraft).where(Aircraft.user_id==u.id));db.execute(delete(HubAsset).where(HubAsset.user_id==u.id));db.execute(delete(HubUpgrade).where(HubUpgrade.user_id==u.id));db.execute(delete(HotelProperty).where(HotelProperty.user_id==u.id));db.execute(delete(Partner).where(Partner.user_id==u.id));db.execute(delete(MarketingCampaign).where(MarketingCampaign.user_id==u.id));db.execute(delete(Employee).where(Employee.user_id==u.id));db.execute(delete(Loan).where(Loan.user_id==u.id));db.execute(delete(FinanceTransaction).where(FinanceTransaction.user_id==u.id));db.execute(delete(UserHub).where(UserHub.user_id==u.id))
+        db.execute(delete(SpecialContract).where(SpecialContract.user_id==u.id));db.execute(delete(SpecialBase).where(SpecialBase.user_id==u.id));db.execute(delete(Route).where(Route.user_id==u.id));db.execute(delete(Aircraft).where(Aircraft.user_id==u.id));db.execute(delete(HubAsset).where(HubAsset.user_id==u.id));db.execute(delete(HubUpgrade).where(HubUpgrade.user_id==u.id));db.execute(delete(HotelProperty).where(HotelProperty.user_id==u.id));db.execute(delete(Partner).where(Partner.user_id==u.id));db.execute(delete(MarketingCampaign).where(MarketingCampaign.user_id==u.id));db.execute(delete(Employee).where(Employee.user_id==u.id));db.execute(delete(Loan).where(Loan.user_id==u.id));db.execute(delete(FinanceTransaction).where(FinanceTransaction.user_id==u.id));db.execute(delete(UserHub).where(UserHub.user_id==u.id))
         u.cash=180_000_000;u.reputation=50;u.hub_code='';u.last_settled=now_utc();db.commit();return {'ok':True}

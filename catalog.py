@@ -77,6 +77,10 @@ OVERRIDES = {
     'A189': dict(seats=18, range_nm=490, cruise_kts=150, price=18_000_000),
     'EC35': dict(seats=7, range_nm=340, cruise_kts=137, price=6_500_000),
     'H145': dict(seats=10, range_nm=350, cruise_kts=134, price=9_500_000),
+    'EC45': dict(seats=10, range_nm=351, cruise_kts=129, price=10_000_000),
+    'A400': dict(seats=116, range_nm=4800, cruise_kts=422, price=170_000_000),
+    'C30J': dict(seats=92, range_nm=2835, cruise_kts=355, price=95_000_000),
+    'RFAL': dict(seats=1, range_nm=2000, cruise_kts=510, price=100_000_000),
 }
 
 
@@ -279,6 +283,75 @@ def aircraft_spec_from_row(row):
     }
 
 
+
+# v0.8: special-purpose aircraft are intentionally visible in the same catalogue
+# as the civil fleet. Their late-game use is gated by the special-operations engine,
+# not hidden from the player.
+SPECIAL_META = {
+    'EC45': {'special_role':'Secours / sécurité civile', 'min_level':61, 'image':'/static/aircraft/h145.jpg'},
+    'A139': {'special_role':'SAR / VIP / service public', 'min_level':61, 'image':'/static/aircraft/h145.jpg'},
+    'A400': {'special_role':'Transport stratégique', 'min_level':81, 'image':'/static/aircraft/a400m.jpg'},
+    'C30J': {'special_role':'Transport / logistique stratégique', 'min_level':81, 'image':'/static/aircraft/a400m.jpg'},
+    'RFAL': {'special_role':'Défense du territoire', 'min_level':81, 'image':'/static/aircraft/rafale.jpg'},
+}
+SPECIAL_AIRCRAFT = {
+    'CL2T': {
+        'icao':'CL2T','iata':'','manufacturer':'De Havilland Canada / Canadair','name':'CL-415 / DHC-515 family',
+        'description':'Aerial firefighting amphibian','wtc':'M','service_ceiling':15000,'approach_speed':90,
+        'cruise_kts':180,'max_speed':195,'length_m':19.8,'wingspan_m':28.6,'fuel_capacity_l':12690,
+        'range_nm':1300,'range_km':2408,'mtow_kg':19890,'seats':2,'price':42_000_000,'lease':2_300_000,
+        'category':'Bombardier d’eau / amphibie','commercial':False,'runway_required_m':950,
+        'source_values_complete':False,'models':[],'special_role':'Sécurité civile / lutte incendie','min_level':66,
+        'image':'/static/aircraft/cl415.jpg'
+    },
+    'NH90': {
+        'icao':'NH90','iata':'','manufacturer':'NHIndustries','name':'NH90',
+        'description':'Medium multirole helicopter','wtc':'M','service_ceiling':20000,'approach_speed':0,
+        'cruise_kts':160,'max_speed':175,'length_m':19.6,'wingspan_m':16.3,'fuel_capacity_l':2500,
+        'range_nm':430,'range_km':796,'mtow_kg':11000,'seats':20,'price':46_000_000,'lease':2_550_000,
+        'category':'Hélicoptère','commercial':False,'runway_required_m':0,
+        'source_values_complete':False,'models':[],'special_role':'Service public / transport stratégique','min_level':76,
+        'image':'/static/aircraft/h145.jpg'
+    },
+    'MQ9': {
+        'icao':'MQ9','iata':'','manufacturer':'General Atomics','name':'MQ-9 class surveillance UAV',
+        'description':'Strategic surveillance remotely piloted aircraft','wtc':'M','service_ceiling':50000,'approach_speed':90,
+        'cruise_kts':170,'max_speed':260,'length_m':11.0,'wingspan_m':20.0,'fuel_capacity_l':0,
+        'range_nm':1000,'range_km':1852,'mtow_kg':4800,'seats':0,'price':32_000_000,'lease':1_750_000,
+        'category':'Surveillance stratégique','commercial':False,'runway_required_m':1100,
+        'source_values_complete':False,'models':[],'special_role':'Surveillance / souveraineté','min_level':81,
+        'image':'/static/aircraft/a400m.jpg'
+    }
+}
+
+def _specialize(spec):
+    if not spec:
+        return spec
+    out=dict(spec)
+    out.update(SPECIAL_META.get((out.get('icao') or '').upper(),{}))
+    if not out.get('image'):
+        code=(out.get('icao') or '').upper()
+        if code.startswith('A35'): out['image']='/static/aircraft/a350_card.jpg'
+        elif code.startswith(('B73','B37','B38','B39','B3J')): out['image']='/static/aircraft/b737_card.jpg'
+        elif code.startswith(('A32','A20','A21','A19')): out['image']='/static/aircraft/a321_card.jpg'
+        elif code.startswith(('E17','E19','E75','E95')): out['image']='/static/aircraft/e190_card.jpg'
+        elif code.startswith(('B78','B77','A33','A34','A38')): out['image']='/static/aircraft/a350_card.jpg'
+        elif out.get('category')=='Hélicoptère': out['image']='/static/aircraft/h145.jpg'
+        else: out['image']='/static/aircraft/a350_card.jpg'
+    out.setdefault('special_role','')
+    out.setdefault('min_level',1)
+    return out
+
+def _special_matches(spec,q='',manufacturer='',category=''):
+    q=(q or '').strip().lower(); manufacturer=(manufacturer or '').strip().lower()
+    if q and q not in ' '.join(str(spec.get(k,'')) for k in ('icao','manufacturer','name','category','special_role')).lower():
+        return False
+    if manufacturer and manufacturer != str(spec.get('manufacturer','')).lower():
+        return False
+    if category and category != spec.get('category'):
+        return False
+    return True
+
 def search_aircraft(q='', manufacturer='', commercial_only=True, category='', limit=60, offset=0):
     q = _clean(q)
     manufacturer = _clean(manufacturer)
@@ -298,26 +371,34 @@ def search_aircraft(q='', manufacturer='', commercial_only=True, category='', li
             where.append("iata!=''")
         rows = con.execute(f'''select * from aircraft_types where {' and '.join(where)}
                               order by manufacturer,name limit ? offset ?''', (*args, limit, offset)).fetchall()
-    specs = [aircraft_spec_from_row(r) for r in rows]
+    specs = [_specialize(aircraft_spec_from_row(r)) for r in rows]
     if category:
         specs = [x for x in specs if x['category'] == category]
-    return specs
+    if not commercial_only and offset==0:
+        synthetic=[_specialize(x) for x in SPECIAL_AIRCRAFT.values() if _special_matches(x,q,manufacturer,category)]
+        existing={x['icao'] for x in specs}
+        specs=synthetic+[x for x in specs if x['icao'] not in {y['icao'] for y in synthetic}]
+    return specs[:limit]
 
 
 def aircraft_detail(code):
     code = _clean(code).upper()
+    if code in SPECIAL_AIRCRAFT:
+        return _specialize(SPECIAL_AIRCRAFT[code])
     with db() as con:
         r = con.execute('select * from aircraft_types where upper(icao)=? limit 1', (code,)).fetchone()
         if not r:
             return None
-        spec = aircraft_spec_from_row(r)
+        spec = _specialize(aircraft_spec_from_row(r))
         spec['models'] = [dict(x) for x in con.execute('select * from aircraft_models where type_icao=? order by name', (r['icao'],)).fetchall()]
     return spec
 
 
 def aircraft_manufacturers():
     with db() as con:
-        return [r[0] for r in con.execute("select distinct manufacturer from aircraft_types where iata!='' and manufacturer!='' order by manufacturer").fetchall()]
+        names={r[0] for r in con.execute("select distinct manufacturer from aircraft_types where manufacturer!='' order by manufacturer").fetchall()}
+    names.update(x['manufacturer'] for x in SPECIAL_AIRCRAFT.values())
+    return sorted(names)
 
 
 def search_airlines(q='', limit=40):
