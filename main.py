@@ -39,7 +39,7 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.5')
+app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.6')
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware('http')
@@ -753,7 +753,7 @@ def daily_quests(db,u):
 
 # -------- Page routes --------
 @app.get('/health')
-def health():return {'status':'ok','version':'1.3.4','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
+def health():return {'status':'ok','version':'1.3.6','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
 
 @app.get('/')
 def root(request:Request):
@@ -1760,10 +1760,10 @@ class BoundedCache(OrderedDict):
         super().__setitem__(key,value)
         while len(self)>self.maxsize:self.popitem(last=False)
 
-_weather_cache=BoundedCache(40)
+_weather_cache=BoundedCache(24)
 # Traffic cache stores only small viewport/tile payloads. 16 entries remain well below
 # Render's 512 MB ceiling and avoid refetching identical FR24 tiles while panning.
-_traffic_cache=BoundedCache(16)
+_traffic_cache=BoundedCache(10)
 
 @app.get('/api/weather/current')
 def api_weather(lat:float,lon:float):
@@ -1776,7 +1776,7 @@ def api_weather(lat:float,lon:float):
     # should never break the cockpit or OPS page.
     for attempt in range(2):
         try:
-            with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
+            with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
                 r=client.get('https://api.open-meteo.com/v1/forecast',params=params);r.raise_for_status();data=r.json()
             cur=data.get('current') or {}
             if cur:
@@ -1831,11 +1831,11 @@ FR24_WORLD_TILES=[
     '-30,-89.999,-179.999,-90','-30,-89.999,-90,0','-30,-89.999,0,90','-30,-89.999,90,179.999',
 ]
 _world_fetch_lock=threading.Lock()
-_fr24_airline_cache=BoundedCache(128)
-_aircraft_photo_cache=BoundedCache(96)
-_aircraft_type_photo_cache=BoundedCache(128)
+_fr24_airline_cache=BoundedCache(64)
+_aircraft_photo_cache=BoundedCache(32)
+_aircraft_type_photo_cache=BoundedCache(16)
 _fr24_count_cache=BoundedCache(8)
-_fr24_detail_cache=BoundedCache(96)
+_fr24_detail_cache=BoundedCache(32)
 
 COMMON_AIRLINES={
     'AFR':'Air France','KLM':'KLM','BAW':'British Airways','DLH':'Lufthansa','SWR':'SWISS','AUA':'Austrian Airlines','IBE':'Iberia','VLG':'Vueling','RYR':'Ryanair','EZY':'easyJet','ITY':'ITA Airways','SAS':'Scandinavian Airlines','FIN':'Finnair','TAP':'TAP Air Portugal','LOT':'LOT Polish Airlines','AEE':'Aegean Airlines','THY':'Turkish Airlines','WZZ':'Wizz Air','BEL':'Brussels Airlines',
@@ -1859,7 +1859,7 @@ def _fr24_headers():
         'Authorization':f'Bearer {_fr24_token()}',
         'Accept':'application/json',
         'Accept-Version':'v1',
-        'User-Agent':'SKYLINE-Airways/1.3.5'
+        'User-Agent':'SKYLINE-Airways/1.3.6'
     }
 
 def _fr24_normalize(x, airport=None):
@@ -1978,7 +1978,7 @@ def _fr24_world_snapshot():
 
 def _opensky_hub(a,span):
     params={'lamin':a['lat']-span,'lomin':a['lon']-span,'lamax':a['lat']+span,'lomax':a['lon']+span}
-    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
+    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
         r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
     states=[]
     for x in raw[:400]:
@@ -1998,7 +1998,7 @@ def _aviation_weather_product(product,icao,ttl):
     errors=[];data=[]
     for host in ('https://aviationweather.gov','https://connect.aviationweather.gov'):
         try:
-            with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
+            with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
                 r=client.get(f'{host}/api/data/{product}',params={'ids':code,'format':'json'});r.raise_for_status();data=r.json()
             if isinstance(data,list):break
         except Exception as e:
@@ -2271,7 +2271,7 @@ def _ops_intelligence(db,u):
     # Query only hubs + airports that are actually used by the player's network.
     # Upstream products run concurrently so a slow public service does not serialize
     # the whole OPS screen. METAR/TAF are batched to stay comfortably below AWC limits.
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         f_notam=pool.submit(_fetch_notams_many,list(airports.keys()))
         f_met=pool.submit(_aviation_weather_many,'metar',list(airports.keys()),90)
         f_taf=pool.submit(_aviation_weather_many,'taf',list(airports.keys()),600)
@@ -2341,7 +2341,7 @@ def api_fr24_status(request:Request):
     with SessionLocal() as db:require_user(request,db)
     configured=bool(_fr24_token())
     return {'configured':configured,'provider':'Flightradar24 API' if configured else 'OpenSky fallback','api_version':'v1','secret_location':'server environment','token_exposed':False,
-            'world_mode':'viewport-adaptive','world_cache_seconds':30,'world_tile_limit':2200,'sandbox_likely':'sandbox' in FR24_BASE_URL.lower()}
+            'world_mode':'viewport-adaptive','world_cache_seconds':30,'world_tile_limit':60,'sandbox_likely':'sandbox' in FR24_BASE_URL.lower()}
 
 @app.get('/api/integrations/fr24/world-summary')
 def api_fr24_world_summary(request:Request):
@@ -2371,6 +2371,16 @@ def api_fr24_airline(code:str,request:Request):
     code=''.join(ch for ch in code.upper().strip() if ch.isalnum())[:4]
     if len(code)<2:raise HTTPException(400,'Code compagnie invalide')
     if code in COMMON_AIRLINES:return {'ok':True,'airline':{'icao':code,'name':COMMON_AIRLINES[code],'source':'skyline-seed'}}
+    # The bundled catalog contains ~2k active airlines. Resolve locally first so
+    # major and regional operators still have the correct identity without
+    # spending an FR24 static-data request.
+    try:
+        local=[x for x in search_airlines(code,8) if str(x.get('icao') or '').upper()==code]
+        if local:
+            row=local[0]
+            return {'ok':True,'airline':{'icao':code,'iata':row.get('iata') or '','name':row.get('name') or code,'country':row.get('country') or '','source':'skyline-catalog'}}
+    except Exception:
+        pass
     now=time.time();cached=_fr24_airline_cache.get(code)
     if cached and now-cached[0]<86400:return cached[1]
     if not _fr24_token():return {'ok':False,'airline':{'icao':code,'name':code,'source':'code'}}
@@ -2448,7 +2458,7 @@ def _planespotters_lookup(kind,value):
     value=''.join(ch for ch in str(value or '').upper() if ch.isalnum() or ch=='-')
     if not value:return None
     try:
-        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
+        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
             r=client.get(f'https://api.planespotters.net/pub/photos/{kind}/{value}');r.raise_for_status();d=r.json()
         photos=d.get('photos') or []
         if not photos:return None
@@ -2467,7 +2477,7 @@ def _commons_registration_photo(registration):
     try:
         params={'action':'query','generator':'search','gsrsearch':f'"{reg}" aircraft','gsrnamespace':6,'gsrlimit':8,
                 'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':900,'format':'json','origin':'*'}
-        with httpx.Client(timeout=httpx.Timeout(7.0,connect=3.5),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
+        with httpx.Client(timeout=httpx.Timeout(7.0,connect=3.5),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
             r=client.get('https://commons.wikimedia.org/w/api.php',params=params);r.raise_for_status();body=r.json()
         pages=list(((body.get('query') or {}).get('pages') or {}).values())
         needle=reg.replace('-','')
@@ -2505,7 +2515,7 @@ def _commons_aircraft_photo(search_text):
     try:
         params={'action':'query','generator':'search','gsrsearch':f'{query} aircraft','gsrnamespace':6,'gsrlimit':12,
                 'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':900,'format':'json','origin':'*'}
-        with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
+        with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
             r=client.get('https://commons.wikimedia.org/w/api.php',params=params);r.raise_for_status();body=r.json()
         pages=list(((body.get('query') or {}).get('pages') or {}).values())
         tokens=[x.lower() for x in re.findall(r'[A-Za-z0-9]+',query) if len(x)>=3]
@@ -2579,7 +2589,7 @@ def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:i
         except Exception as e:fr24_error=type(e).__name__
     try:
         params={'lamin':lamin,'lomin':lomin,'lamax':lamax,'lomax':lomax}
-        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
+        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
         states=[]
         for x in raw[:limit]:
             if len(x)<11 or x[5] is None or x[6] is None:continue

@@ -83,3 +83,10 @@ FAA NOTAM Search est un service public de consultation et non une API développe
 
 ## Hotfix v1.3.4
 Voir `CHANGELOG_v1.3.4.md` pour la correction du diagnostic FR24 mondial.
+
+
+## v1.3.6 — stabilité et bibliothèque visuelle
+- 591/591 types du catalogue possèdent une illustration locale légère sur fond blanc.
+- 2 000+ compagnies du catalogue sont résolues localement par code ICAO ; 100+ grandes compagnies disposent aussi d’un badge premium local.
+- Le Globe n’affiche plus de trafic fictif : uniquement FR24/OpenSky et la flotte du joueur.
+- Les détails d’un avion réel recherchent une photo par immatriculation/hex ; à défaut, le rendu du type est utilisé.
