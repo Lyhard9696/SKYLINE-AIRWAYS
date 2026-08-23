@@ -177,6 +177,27 @@ def major_airports(limit=2500):
     return [_airport_row(r) for r in rows]
 
 
+
+def airport_countries(min_scheduled=2):
+    """Countries with scheduled airports, for strategic base selection."""
+    with db() as con:
+        rows=con.execute("select country, count(*) as n from airports where scheduled=1 and country!='' group by country having count(*)>=? order by n desc, country",(int(min_scheduled),)).fetchall()
+    return [{'code':r['country'],'airport_count':int(r['n'])} for r in rows]
+
+
+def special_base_airports(country, limit=120):
+    country=_clean(country).upper()[:2]
+    if not country:return []
+    limit=max(10,min(240,int(limit)))
+    sql="select * from airports where country=? and scheduled=1 and type in ('large_airport','medium_airport','small_airport') order by case type when 'large_airport' then 0 when 'medium_airport' then 1 else 2 end, case when iata!='' then 0 else 1 end, name limit ?"
+    with db() as con:
+        rows=con.execute(sql,(country,limit)).fetchall()
+    out=[]
+    for r in rows:
+        d=_airport_row(r,with_price=False)
+        out.append({'ident':d['ident'],'code':d['code'],'name':d['name'],'municipality':d.get('municipality') or '', 'country':d.get('country') or country,'type':d['type'],'lat':d['lat'],'lon':d['lon']})
+    return out
+
 def all_owned_hub_candidates(q='', limit=50):
     return search_airports(q, limit=limit)
 
@@ -334,8 +355,10 @@ def _specialize(spec):
     # worse than an explicit "photo non disponible" state.
     verified={
         'A21N':'/static/aircraft/real/a321neo.jpg',
+        'A359':'/static/aircraft/real/a350.jpg','A35K':'/static/aircraft/real/a350.jpg',
         'B38M':'/static/aircraft/real/b737max8.jpg','B37M':'/static/aircraft/real/b737max8.jpg',
         'B39M':'/static/aircraft/real/b737max8.jpg','B3JM':'/static/aircraft/real/b737max8.jpg',
+        'E290':'/static/aircraft/real/e190e2.jpg','E295':'/static/aircraft/real/e190e2.jpg',
         'EC45':'/static/aircraft/real/h145.jpg','NH90':'/static/aircraft/real/nh90.jpg',
         'CL2T':'/static/aircraft/real/cl415.jpg','A400':'/static/aircraft/real/a400m.jpg',
         'RFAL':'/static/aircraft/real/rafale.jpg',
