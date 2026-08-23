@@ -26,3 +26,6 @@ services:
         value: '1'
       - key: MALLOC_ARENA_MAX
         value: '2'
+      - key: FR24_REFRESH_SECONDS
+        value: '45'
+

@@ -1,4 +1,25 @@
-# SKYLINE AIRWAYS v0.6 — Aviation Premium
+# SKYLINE AIRWAYS v0.6.1 — REAL DATA & LIVERIES
+
+Cette mise à jour ajoute un branchement Flightradar24 officiel plus complet et une bibliothèque de presets de livrées de compagnies réelles pour le prototype privé.
+
+## Flightradar24
+
+Le backend utilise l'endpoint officiel `live/flight-positions/full` dès que `FR24_API_TOKEN` est défini dans Render. Il récupère position, altitude, vitesse, cap, immatriculation, type, origine, destination et opérateur. Le hub **et** le globe utilisent désormais cette source en priorité. OpenSky reste le fallback automatique si le token est absent, invalide ou à court de crédits. Le token reste uniquement côté serveur.
+
+Dans Render → Environment, renseigne :
+
+```text
+FR24_API_TOKEN=ton_token_officiel
+FR24_REFRESH_SECONDS=45
+```
+
+Ne mets jamais le token dans GitHub. Les données FR24 ne sont gardées que dans un petit cache RAM de quelques dizaines de secondes.
+
+## Livrées réelles / presets
+
+Le Livery Studio contient maintenant des presets pour Air France, easyJet, Lufthansa, Emirates, KLM, British Airways, Qatar Airways, Turkish Airlines, Singapore Airlines, ANA, Japan Airlines, Qantas, Delta, United, American, Air Canada, SWISS, Iberia, TAP, Ryanair, Wizz Air et Etihad.
+
+Ces presets appliquent automatiquement palette, dérive, moteurs, accent, style et wordmark. Ils restent modifiables ensuite. Pour rester distribuable, le ZIP ne contient pas les fichiers graphiques propriétaires exacts des logos; le moteur est prêt à utiliser des assets dédiés plus tard.
 
 # SKYLINE AIRWAYS — v0.5 REALISM OPERATIONS
 

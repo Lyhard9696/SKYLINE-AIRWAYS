@@ -36,10 +36,25 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='0.6')
+app=FastAPI(title='SKYLINE AIRWAYS',version='0.6.1')
 app.mount('/static',StaticFiles(directory=os.path.join(APP_DIR,'static')),name='static')
 templates=Jinja2Templates(directory=os.path.join(APP_DIR,'templates'))
 signer=URLSafeSerializer(SECRET_KEY,salt='skyline-v4')
+
+# -------- Real-world livery preset library (private prototype) --------
+LIVERY_PRESET_PATH=os.path.join(APP_DIR,'data','livery_presets.json')
+try:
+    with open(LIVERY_PRESET_PATH,'r',encoding='utf-8') as _f:
+        LIVERY_PRESETS=json.load(_f)
+except Exception:
+    LIVERY_PRESETS=[]
+LIVERY_PRESET_BY_NAME={x.get('name'):x for x in LIVERY_PRESETS}
+LIVERY_PRESET_BY_ID={x.get('id'):x for x in LIVERY_PRESETS}
+AIRLINE_COLORS={x.get('airline_icao'):{'primary':x.get('primary'),'accent':x.get('accent'),'name':x.get('name')} for x in LIVERY_PRESETS if x.get('airline_icao')}
+
+def _livery_meta(name):
+    p=LIVERY_PRESET_BY_NAME.get(name)
+    return {'preset_id':p.get('id'),'brand_text':p.get('wordmark'),'airline_icao':p.get('airline_icao')} if p else {'preset_id':'','brand_text':'','airline_icao':''}
 
 # -------- Password/session helpers --------
 def pw_hash(password:str)->str:
@@ -144,7 +159,7 @@ def serialize_aircraft(a,route=None):
     return {
         'id':a.id,'tail':a.tail,'type_icao':a.type_icao,'model_variant':a.model_variant,'spec':spec,
         'acquisition':a.acquisition,'condition':a.condition,'home_hub':a.home_hub,
-        'livery':{'primary':a.livery_primary,'secondary':a.livery_secondary,'accent':a.livery_accent,'template':a.livery_template,'name':a.livery_name},
+        'livery':{'primary':a.livery_primary,'secondary':a.livery_secondary,'accent':a.livery_accent,'template':a.livery_template,'name':a.livery_name,**_livery_meta(a.livery_name)},
         'route_id':route.id if route else None,'flight':flight
     }
 
@@ -422,6 +437,22 @@ def api_aircraft_detail(code:str):
 
 @app.get('/api/airlines/search')
 def api_airlines(q:str='',limit:int=40):return search_airlines(q,limit)
+
+
+@app.get('/api/liveries/presets')
+def api_livery_presets():
+    # Brand names/colour presets for the owner's private prototype. Exact trademark artwork is not bundled.
+    return {'items':LIVERY_PRESETS,'count':len(LIVERY_PRESETS),'mode':'private-prototype'}
+
+@app.get('/api/providers/status')
+def api_provider_status():
+    return {
+        'flightradar24':{'configured':bool(os.getenv('FR24_API_TOKEN','').strip()),'mode':'official-api','fallback':'OpenSky'},
+        'weather':{'configured':True,'provider':'Open-Meteo'},
+        'weather_radar':{'configured':True,'provider':'RainViewer client layer'},
+        'surface':{'configured':True,'provider':'OpenStreetMap / Overpass + OurAirports fallback'},
+        'notam':{'configured':bool(os.getenv('NOTAM_API_URL','').strip() and os.getenv('NOTAM_API_KEY','').strip()),'provider':'configurable licensed feed'}
+    }
 
 # -------- Hub APIs --------
 @app.get('/api/hubs')
@@ -839,55 +870,55 @@ def api_weather(lat:float,lon:float):
 def api_live_traffic(ident:str):
     a=airport_detail(ident)
     if not a:raise HTTPException(404,'Aéroport introuvable')
-    key=a['ident'];now=time.time();cached=_traffic_cache.get(key)
-    if cached and now-cached[0]<18:return cached[1]
     span=.45 if a['type']=='large_airport' else .32
-    params={'lamin':a['lat']-span,'lomin':a['lon']-span,'lamax':a['lat']+span,'lomax':a['lon']+span}
-    out={'source':'simulated','states':[]}
-    try:
-        with httpx.Client(timeout=6.0,headers={'User-Agent':'SKYLINE-Airways-Prototype/0.4'}) as client:
-            r=client.get('https://opensky-network.org/api/states/all',params=params)
-            if r.status_code==200:
-                raw=r.json().get('states') or []
-                states=[]
-                for s in raw[:140]:
-                    if len(s)<11 or s[5] is None or s[6] is None:continue
-                    states.append({'icao24':s[0],'callsign':(s[1] or '').strip(),'country':s[2],'lon':s[5],'lat':s[6],'baro_altitude':s[7],'on_ground':bool(s[8]),'velocity':s[9],'heading':s[10]})
-                out={'source':'OpenSky','states':states}
-    except Exception:pass
-    _traffic_cache[key]=(now,out);return out
+    return _fetch_live_traffic_box(a['lat']-span,a['lon']-span,a['lat']+span,a['lon']+span,100,('airport',a['ident']))
 
 
-@app.get('/api/live-traffic/box')
-def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=300):
-    # Prefer the official Flightradar24 API when the owner supplies a licensed API token.
-    # Otherwise use OpenSky in the same display layer. No FR24 website scraping or map copying is performed.
-    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(20,min(180,limit))
-    bucket=(round(lamin,1),round(lomin,1),round(lamax,1),round(lomax,1),limit);now=time.time();cached=_traffic_cache.get(('box',)+bucket)
-    if cached and now-cached[0]<20:return cached[1]
+def _fetch_live_traffic_box(lamin,lomin,lamax,lomax,limit=140,cache_key=None):
+    lamin=max(-85,min(85,float(lamin)));lamax=max(-85,min(85,float(lamax)))
+    lomin=max(-180,min(180,float(lomin)));lomax=max(-180,min(180,float(lomax)))
+    limit=max(20,min(180,int(limit)))
+    bucket=cache_key or ('box',round(lamin,1),round(lomin,1),round(lamax,1),round(lomax,1),limit)
+    now=time.time();cached=_traffic_cache.get(bucket)
+    refresh=max(25,int(os.getenv('FR24_REFRESH_SECONDS','45') or 45))
+    if cached and now-cached[0]<refresh:return cached[1]
     token=os.getenv('FR24_API_TOKEN','').strip()
     if token:
         try:
-            bounds=f'{lamax},{lamin},{lomin},{lomax}'
-            headers={'Authorization':f'Bearer {token}','Accept-Version':'v1','Accept':'application/json','User-Agent':'SKYLINE-Airways/0.5'}
+            bounds=f'{lamax},{lamin},{lomin},{lomax}' # FR24 expects north,south,west,east
+            headers={'Authorization':f'Bearer {token}','Accept-Version':'v1','Accept':'application/json','User-Agent':'SKYLINE-Airways/0.6.1'}
             with httpx.Client(timeout=7.5,headers=headers) as client:
                 r=client.get('https://fr24api.flightradar24.com/api/live/flight-positions/full',params={'bounds':bounds,'limit':limit});r.raise_for_status();raw=r.json().get('data') or []
-            states=[{'id':x.get('fr24_id'),'callsign':x.get('callsign') or x.get('flight') or '', 'flight':x.get('flight') or '', 'country':'', 'lon':x.get('lon'),'lat':x.get('lat'),'altitude_ft':x.get('alt'),'velocity_kts':x.get('gspeed'),'heading':x.get('track'),'type':x.get('type') or '', 'reg':x.get('reg') or '', 'origin':x.get('orig_iata') or x.get('orig_icao') or '', 'destination':x.get('dest_iata') or x.get('dest_icao') or '', 'airline':x.get('painted_as') or x.get('operating_as') or '', 'on_ground':(x.get('alt') or 0)<200} for x in raw if x.get('lat') is not None and x.get('lon') is not None]
-            out={'source':'Flightradar24 API','states':states,'licensed':True};_traffic_cache[('box',)+bucket]=(now,out);return out
-        except Exception:
-            pass
+            states=[]
+            for x in raw:
+                if x.get('lat') is None or x.get('lon') is None:continue
+                op=(x.get('painted_as') or x.get('operating_as') or '').upper()
+                palette=AIRLINE_COLORS.get(op,{})
+                states.append({'id':x.get('fr24_id'),'callsign':x.get('callsign') or x.get('flight') or '', 'flight':x.get('flight') or '', 'country':'', 'lon':x.get('lon'),'lat':x.get('lat'),'altitude_ft':x.get('alt'),'velocity_kts':x.get('gspeed'),'heading':x.get('track'),'type':x.get('type') or '', 'reg':x.get('reg') or '', 'origin':x.get('orig_iata') or x.get('orig_icao') or '', 'destination':x.get('dest_iata') or x.get('dest_icao') or '', 'airline':op, 'airline_name':palette.get('name',''), 'marker_color':palette.get('primary','#f2c94c'), 'marker_accent':palette.get('accent','#ffffff'), 'on_ground':(x.get('alt') or 0)<200, 'timestamp':x.get('timestamp'), 'source_type':x.get('source') or ''})
+            out={'source':'Flightradar24 API','states':states,'licensed':True,'refresh_seconds':refresh}
+            _traffic_cache[bucket]=(now,out);return out
+        except Exception as exc:
+            # Never break the game if the paid provider is unavailable / out of credits.
+            fr24_error=str(exc)[:160]
+        else:fr24_error=''
+    else:fr24_error='FR24_API_TOKEN absent'
     try:
         params={'lamin':lamin,'lomin':lomin,'lamax':lamax,'lomax':lomax}
-        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/0.5'}) as client:
+        with httpx.Client(timeout=6.0,headers={'User-Agent':'SKYLINE-Airways/0.6.1'}) as client:
             r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
         states=[]
         for x in raw[:limit]:
             if len(x)<11 or x[5] is None or x[6] is None:continue
-            states.append({'id':x[0],'callsign':(x[1] or '').strip(),'flight':(x[1] or '').strip(),'country':x[2] or '', 'lon':x[5],'lat':x[6],'altitude_ft':int((x[7] or 0)*3.28084),'velocity_kts':round((x[9] or 0)*1.94384,1),'heading':x[10] or 0,'type':'','reg':'','origin':'','destination':'','airline':'','on_ground':bool(x[8])})
-        out={'source':'OpenSky','states':states,'licensed':False}
+            states.append({'id':x[0],'callsign':(x[1] or '').strip(),'flight':(x[1] or '').strip(),'country':x[2] or '', 'lon':x[5],'lat':x[6],'altitude_ft':int((x[7] or 0)*3.28084),'velocity_kts':round((x[9] or 0)*1.94384,1),'heading':x[10] or 0,'type':'','reg':'','origin':'','destination':'','airline':'','airline_name':'','marker_color':'#f2c94c','marker_accent':'#ffffff','on_ground':bool(x[8])})
+        out={'source':'OpenSky','states':states,'licensed':False,'fr24_error':fr24_error,'refresh_seconds':refresh}
     except Exception:
-        out={'source':'unavailable','states':[],'licensed':False}
-    _traffic_cache[('box',)+bucket]=(now,out);return out
+        out={'source':'unavailable','states':[],'licensed':False,'fr24_error':fr24_error,'refresh_seconds':refresh}
+    _traffic_cache[bucket]=(now,out);return out
+
+
+@app.get('/api/live-traffic/box')
+def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=140):
+    return _fetch_live_traffic_box(lamin,lomin,lamax,lomax,limit)
 
 _surface_cache=BoundedCache(2)
 

@@ -97,3 +97,6 @@ input,select,textarea{background:#fff!important;color:#18334a!important;border-c
   .right-drawer{background:rgba(250,252,253,.98);max-height:56%}.right-drawer.closed{transform:translateY(calc(100% + 24px));opacity:0}
   .route-sheet{position:relative;max-height:none}.sheet-handle{display:block}.routes-layout{display:block}.routes-layout>.panel+section{margin-top:14px}
 }
+
+/* v0.6.1 — real-data/livery additions */
+.real-livery-banner{display:grid;grid-template-columns:1fr minmax(190px,300px);gap:14px;align-items:center;padding:14px 16px;margin:12px 0 16px;border:1px solid rgba(90,150,190,.32);background:rgba(12,38,58,.68);border-radius:16px}.real-livery-banner b,.real-livery-banner span{display:block}.real-livery-banner span{font-size:.86rem;color:var(--muted);margin-top:3px}.real-livery-banner select{width:100%}.world-real-marker{filter:drop-shadow(0 1px 3px rgba(0,0,0,.85));font-size:22px;text-shadow:0 0 2px #fff,0 0 7px currentColor}.provider-live{color:#53d99c}.provider-fallback{color:#f2c94c}@media(max-width:720px){.real-livery-banner{grid-template-columns:1fr}}
