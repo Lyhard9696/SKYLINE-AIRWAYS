@@ -1,0 +1,119 @@
+/* SKYLINE AIRWAYS v0.6 — Premium Realism UI
+   Contemporary airline-management design: bright, photographic, discreet navy/gold. */
+:root{
+  --bg:#edf1f5;--bg2:#f7f8fa;--panel:#ffffffee;--panel2:#f8fafc;--border:#d8e0e8;
+  --text:#10243b;--muted:#6f7f90;--accent:#1d9d70;--blue:#1769a7;--amber:#c99535;--danger:#cf4e57;
+  --nav-h:74px;--navy:#082a4b;--navy2:#0c355b;--gold:#c99a43;--shadow:0 16px 42px rgba(16,39,65,.12)
+}
+html,body{background:var(--bg);color:var(--text)}
+.game-body{background:linear-gradient(180deg,#f8fafc 0,#edf1f5 100%)}
+.muted{color:var(--muted)}.eyebrow{color:#597995;font-weight:800}.hidden{display:none!important}
+.primary{background:linear-gradient(180deg,#103e69,#082d50);color:white;box-shadow:0 8px 20px #0b335326}
+.primary:hover{filter:brightness(1.05)}.primary:disabled{background:#dfe5ea;color:#98a5b1;box-shadow:none}
+.secondary{background:#fff;color:#15324f;border:1px solid #ccd7e1}.danger-button{background:#fff3f3;color:#b23f49;border:1px solid #efc2c5}
+.mini-btn{background:#edf4fa;color:#16466c;border:1px solid #c7d7e5;padding:8px 10px}.danger-btn{color:#b6444d;background:#fff3f3;border-color:#ecc4c7}
+.glass-btn{background:#ffffffdf;color:#173c5d;border:1px solid #cbd8e3;box-shadow:0 4px 18px #17324c16;backdrop-filter:blur(18px)}
+.glass-btn.active{background:#0b3558;color:white;border-color:#0b3558}.round-btn{background:#fff;color:#15334e;border:1px solid #cbd7e1;box-shadow:0 4px 18px #17324c14}
+input,select{background:#fff;color:#11283e;border:1px solid #cbd7e1}input:focus,select:focus{border-color:#4d90bd;box-shadow:0 0 0 3px #4b98c720}
+label{color:#344c62}.form-error{background:#fff2f2;color:#ab3843;border-color:#edc1c4}
+
+/* Header */
+.topbar{height:72px;background:rgba(249,251,252,.94);border-bottom:1px solid #dce3e9;box-shadow:0 3px 18px #19334a12;color:#0e2943}
+.brand-plane{color:#1c77b6}.brand b{color:#0c2943;font-weight:850}.brand small{color:#718292}.topstats>div{border-left:1px solid #dde4ea}.topstats small{color:#7c8b98;font-weight:700}.topstats b{color:#10283e}.topstats .level-stat b{color:#b78227}
+.game-main{inset:72px 0 var(--nav-h) 0}.content-view{background:linear-gradient(180deg,#f7f9fb 0,#edf1f5 100%)}
+.content-head h1,.panel h2,.premium-card h2{color:#10273f}
+
+/* Navigation */
+.bottom-nav{grid-template-columns:repeat(6,1fr);background:rgba(250,251,252,.96);border:1px solid #d4dde5;box-shadow:0 12px 42px #17324c20}
+.bottom-nav button{color:#758696;font-size:10px}.bottom-nav button span{color:#3d5367}.bottom-nav button.active{background:linear-gradient(180deg,#eef5fa,#e5f0f7);color:#0f5f94}.bottom-nav button.active span{color:#0f6fae}
+.more-backdrop{position:fixed;z-index:80;inset:0;background:#10243b4d;opacity:0;pointer-events:none;transition:.2s}.more-backdrop.open{opacity:1;pointer-events:auto}
+.more-menu{position:fixed;z-index:81;right:18px;top:82px;width:min(340px,calc(100% - 30px));background:#fffffff8;border:1px solid #d2dce5;border-radius:22px;padding:14px;box-shadow:0 24px 70px #102a4430;transform:translateY(-10px) scale(.98);opacity:0;pointer-events:none;transition:.2s;backdrop-filter:blur(24px)}
+.more-menu.open{transform:none;opacity:1;pointer-events:auto}.more-menu-head{display:flex;justify-content:space-between;align-items:center;padding:5px 6px 10px}.more-menu-head h2{margin:0;color:#10273f}
+.more-menu>button,.more-menu>a{width:100%;display:block;text-align:left;border:0;border-top:1px solid #e4e9ee;background:transparent;color:#18364f;padding:15px 10px;text-decoration:none;font-weight:700}.more-menu>button:hover,.more-menu>a:hover{background:#f3f7fa}
+
+/* Generic cards */
+.panel,.premium-card,.manage-card,.staff-card,.service-card,.selected-airport,.search-result{background:#fff;border-color:#d4dee7;box-shadow:0 8px 28px #16324a0c;color:#16314a}
+.panel{box-shadow:var(--shadow)}.panel p,.manage-card p,.manage-card small,.staff-card span,.service-card p{color:#718293}
+.search-result:hover{border-color:#79a6c5;background:#f8fbfd}.selected-airport.empty{color:#7b8b9a}.empty-state{color:#798b9b}.empty-state b{color:#18344d}
+.management-tabs button{background:#fff;color:#607589;border-color:#d0dae3}.management-tabs button.active{background:#0c355b;color:#fff;border-color:#0c355b}
+.finance-table th,.finance-table td{border-color:#e3e8ed}.finance-table th{color:#728393}.profit-pos{color:#16815c}.profit-neg{color:#c64b55}
+.estimate-grid>div{background:#f7f9fb;border-color:#dde5eb}.estimate-grid small{color:#7c8d9c}
+
+/* Home */
+.home-view{padding:18px 22px 34px}.home-wrap{max-width:1320px;margin:auto}.home-hero{min-height:172px;border-radius:24px;background:linear-gradient(110deg,rgba(9,44,75,.96),rgba(19,74,113,.82)),url('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/5/8') center/cover;color:white;padding:28px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;box-shadow:0 18px 46px #102f4924;overflow:hidden;position:relative}
+.home-hero:after{content:'✈';position:absolute;right:5%;top:12%;font-size:100px;color:#ffffff18;transform:rotate(-10deg)}.home-hero .eyebrow{color:#c9dcec}.home-hero h1{font-size:clamp(32px,4vw,52px);margin:2px 0 6px;letter-spacing:-.035em}.home-hero .muted{color:#d4e0e9;margin:0;max-width:700px}
+.career-card{display:flex;gap:13px;align-items:center;background:#ffffffef;color:#17324b;border-radius:18px;padding:14px 16px;min-width:310px;box-shadow:0 10px 26px #00172925;z-index:2}.career-badge{width:64px;height:64px;border-radius:50%;display:grid;place-content:center;text-align:center;background:#0b355b;color:#fff;border:4px solid #d7b36b}.career-badge span{font-size:8px;letter-spacing:.12em}.career-badge b{font-size:25px}.career-info{min-width:180px}.career-info small,.career-info b{display:block}.career-info small{color:#8a6729;font-weight:800;text-transform:uppercase;font-size:10px}.career-info b{margin:5px 0;color:#17324b}.progress-line{height:7px;border-radius:99px;background:#dfe6ec;overflow:hidden}.progress-line i{display:block;height:100%;width:0;background:linear-gradient(90deg,#c99a43,#e2bd70);border-radius:99px}
+.home-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}.home-kpis article{background:#fff;border:1px solid #d6e0e8;border-radius:18px;padding:16px;box-shadow:0 8px 24px #17324a0b}.home-kpis span,.home-kpis small,.home-kpis b{display:block}.home-kpis span{color:#6f8293;font-size:12px}.home-kpis b{font-size:24px;margin:6px 0;color:#15324a}.home-kpis small{color:#8796a3}.home-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}.premium-card{border:1px solid #d6e0e8;border-radius:20px;padding:18px;box-shadow:0 10px 30px #17324a0c}.premium-card header{display:flex;justify-content:space-between;align-items:start;gap:10px;margin-bottom:12px}.premium-card h2{margin:0;font-size:22px}.text-btn{border:0;background:transparent;color:#17689e;font-weight:800;cursor:pointer;padding:4px}
+.home-hub-body{display:grid;grid-template-columns:1fr 1fr;gap:12px}.hub-summary-photo{min-height:180px;border-radius:15px;background:linear-gradient(180deg,transparent,#0c2e4f66),url('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/9/259/176') center/cover;position:relative;overflow:hidden}.hub-summary-photo .hub-code{position:absolute;left:14px;bottom:12px;color:white;font-size:31px;font-weight:850;text-shadow:0 2px 8px #0007}.hub-summary-data{display:grid;grid-template-columns:1fr 1fr;gap:8px}.hub-summary-data div{background:#f6f9fb;border:1px solid #e0e7ec;border-radius:13px;padding:11px}.hub-summary-data small,.hub-summary-data b{display:block}.hub-summary-data small{color:#7a8b9a;font-size:10px}.hub-summary-data b{margin-top:4px;font-size:17px}.sat-bar{grid-column:1/-1}.sat-meter{height:8px;background:#dfe6ea;border-radius:99px;margin-top:7px;overflow:hidden}.sat-meter i{display:block;height:100%;background:linear-gradient(90deg,#e1a947,#31a974);border-radius:99px}
+.quest-list{display:grid;gap:8px}.quest-item{border:1px solid #e0e6eb;border-radius:14px;padding:11px 12px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;background:#fafcfd}.quest-item b,.quest-item small{display:block}.quest-item small{color:#7c8b98;margin-top:3px}.quest-item .quest-progress{height:6px;border-radius:99px;background:#e2e8ed;margin-top:7px;overflow:hidden}.quest-item .quest-progress i{height:100%;display:block;background:#2d8cb9;border-radius:99px}.quest-item button{border:0;background:#0d3559;color:white;border-radius:10px;padding:9px 10px;font-weight:750}.quest-item button:disabled{background:#e6eaee;color:#95a1ab}
+.crew-overview,.home-flight-list{display:grid;gap:9px}.crew-route,.home-flight{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid #e6ebef;padding:9px 0}.crew-route:last-child,.home-flight:last-child{border:0}.crew-route small,.home-flight small{display:block;color:#778998}.crew-route .risk-good{color:#16815c}.crew-route .risk-warn{color:#b67818}.crew-route .risk-bad{color:#c14a55}
+
+/* Hub/world maps */
+.map-title{background:#fffffff2;border-color:#d4dfe7;color:#15334e;box-shadow:0 12px 32px #14304b16}.map-title h1{color:#102b45}.map-title span{color:#718393}.hub-mini-kpis{display:flex;gap:10px;margin-top:9px}.hub-mini-kpis span{background:#f3f7fa;border:1px solid #dbe4eb;border-radius:99px;padding:5px 8px;color:#718393;font-size:10px}.hub-mini-kpis b{color:#173a58}.toolbar-row select{background:#fffffff0;color:#14334d;border-color:#cad8e2}
+.right-drawer{background:#fffffff7;border-color:#d2dde5;color:#16334d;box-shadow:0 20px 65px #12314c2d;transform:translateX(calc(100% + 40px));opacity:0;pointer-events:none}.right-drawer.open{transform:none;opacity:1;pointer-events:auto}.drawer-close{background:#edf3f7;color:#17334d}.inspector-title{color:#112e48}.inspector-tag{color:#467797}.level-box,.owned-plane-card{background:#f4f8fa;border:1px solid #dce5eb}.level-box span{color:#7a8b99}.stat-row{border-color:#e2e8ed}.prereq{background:#fff7e8;color:#8a6117;border-color:#ecd7aa}
+.map-legend{background:#fffffff0;border-color:#d4dfe7;color:#526a7d}.map-credit,.weather-credit{background:#ffffffd9;color:#607487}.maplibregl-popup-content{background:#fff;color:#14314b;border-color:#d4dde5}.maplibregl-popup-tip{border-top-color:#fff!important}.maplibregl-ctrl-group{background:#fffffff0!important}.maplibregl-ctrl button{filter:none}.maplibregl-ctrl-attrib{background:#ffffffcf!important;color:#617487!important}.maplibregl-ctrl-attrib a{color:#176da6!important}
+/* Remove prototype dots: upgrades are compact labelled operational chips. */
+.hub-upgrade-marker{width:auto;min-width:34px;height:28px;border-radius:8px;padding:0 7px;background:#ffffffee!important;color:#17344e!important;border:1px solid #cbd7e1!important;box-shadow:0 5px 14px #142f4824;font-size:9px;gap:4px;display:flex;align-items:center;white-space:nowrap}.hub-upgrade-marker.active{border-color:#72b99c!important;background:#f1fbf6!important;color:#166646!important}.hub-upgrade-marker.available{border-color:#d8b36a!important;background:#fff9ed!important;color:#7d5c20!important}.hub-upgrade-marker.locked{filter:grayscale(1);opacity:.7;background:#edf1f4!important;color:#697987!important}.hub-upgrade-marker:hover{transform:translateY(-1px) scale(1.02)}
+.hub-asset-marker{background:#fff!important;color:#16334d!important;border:1px solid #c9d5de!important;box-shadow:0 5px 15px #16314a25}.hub-asset-marker.locked{background:#dfe4e8e8!important;color:#66737f!important;border-color:#aeb8c0!important;filter:grayscale(1);opacity:.78}.hub-asset-marker.owned{background:#e9f8f1!important;color:#146b4b!important;border-color:#5bac8a!important}.ground-service-marker{background:#fffffff0;color:#17364f;border-color:#c9d7e1}
+
+/* Surface map: terminals/buildings remain visible as geography rather than orange markers. */
+.daynight-legend{background:#ffffffdf;border-color:#d4dfe7;color:#617487}
+
+/* Fleet / market */
+.market-grid,.fleet-list{max-width:1500px;margin:auto}.aircraft-card,.fleet-item{background:#fff!important;border-color:#d4dee7!important;box-shadow:0 10px 28px #15314a0b!important;color:#17324b}.aircraft-card .muted,.fleet-item small{color:#728393}.aircraft-visual-card{background:#f2f6f9;border-radius:11px}.route-kpi span{background:#f2f6f8;border-color:#dae3e9;color:#627788}
+
+/* Modals */
+.modal{background:#10243b73}.modal-card{background:#fff;color:#15324b;border-color:#d4dfe7;box-shadow:0 28px 90px #102c472f}.modal-close{background:#edf2f6;color:#16334d}.livery-canvas{background:radial-gradient(circle at 50% 0,#eaf2f7,#f8fafb 70%);border-color:#d4dee7}
+
+/* Cockpit stays deliberately dark/immersive. */
+.cockpit-modal{background:#02060a}.cockpit-header .glass-btn{background:#07131ddd;color:#fff;border-color:#3c5264}.cockpit-note{color:#cbd8e2}
+
+/* Responsive */
+@media(max-width:1000px){.home-grid{grid-template-columns:1fr}.career-card{min-width:270px}.topstats>div:nth-last-child(-n+2){display:none}}
+@media(max-width:760px){
+  :root{--nav-h:66px}.topbar{height:62px}.game-main{inset:62px 0 var(--nav-h) 0}.topstats>div{display:none}.topstats>div.level-stat,.topstats>div:nth-child(2){display:block;min-width:auto;padding:0 7px}.topstats .level-stat small,.topstats .level-stat b{display:inline}.topstats .level-stat b{margin-left:3px}.brand{min-width:auto}.bottom-nav{grid-template-columns:repeat(6,1fr)}.bottom-nav button{font-size:8px}.bottom-nav button span{font-size:17px}
+  .home-view{padding:10px 9px 22px}.home-hero{min-height:162px;padding:17px;display:block}.home-hero h1{font-size:31px}.career-card{margin-top:14px;min-width:0;width:100%;padding:10px 12px}.career-badge{width:54px;height:54px}.home-kpis{grid-template-columns:1fr 1fr;gap:7px}.home-kpis article{padding:12px}.home-kpis b{font-size:19px}.home-grid{gap:9px}.premium-card{padding:13px;border-radius:17px}.home-hub-body{grid-template-columns:1fr}.hub-summary-photo{min-height:150px}.premium-card h2{font-size:19px}
+  .right-drawer{top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:52%;transform:translateY(calc(100% + 30px))}.right-drawer.open{transform:none}.more-menu{right:8px;top:68px;width:calc(100% - 16px)}
+  .top-left{left:8px;top:8px;right:8px}.map-title{max-width:100%;display:block}.map-title h1{font-size:19px}.hub-mini-kpis{overflow:auto;white-space:nowrap}.toolbar-row{margin-top:6px}.toolbar-row select{min-width:185px}
+}
+.bank-offers{display:grid;gap:8px;margin:10px 0 14px}.bank-offer{display:grid;gap:3px;text-align:left;background:#f8fafc;border:1px solid #d9e2e9;border-radius:13px;padding:11px;color:#17324b;cursor:pointer}.bank-offer span,.bank-offer small{color:#748696}.bank-offer.selected{border-color:#b58a3d;box-shadow:0 0 0 2px #d9b76f22;background:#fffaf0}.bank-offer:disabled{opacity:.55;cursor:not-allowed}.panel hr{border:0;border-top:1px solid #e2e8ed;margin:18px 0}
+.route-form-toggle{display:none;margin-bottom:10px}.route-form-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.route-form-head h2{margin:0}.route-form-head #closeRouteForm{display:none}
+@media(max-width:760px){.route-form-toggle{display:block;width:100%}.route-form{display:none}.route-form.mobile-open{display:block}.route-form-head #closeRouteForm{display:block}}
+
+/* v0.7.1 — live traffic markers: aircraft silhouette + callsign, no arcade circles */
+.real-aircraft-marker,.player-aircraft-marker{appearance:none;border:0;background:transparent;color:#f7fbff;display:flex;align-items:center;gap:4px;filter:drop-shadow(0 2px 5px #000b);cursor:pointer;padding:0;white-space:nowrap}
+.real-aircraft-marker .plane-glyph,.player-aircraft-marker .plane-glyph{display:inline-block;font-size:18px;line-height:1;transform-origin:center}
+.real-aircraft-marker small,.player-aircraft-marker small{font:700 9px/1.1 system-ui,-apple-system,sans-serif;letter-spacing:.025em;background:rgba(2,12,21,.78);border:1px solid rgba(194,225,245,.35);border-radius:5px;padding:3px 5px;color:#eef7fd;backdrop-filter:blur(7px)}
+.real-aircraft-marker.terminal{opacity:.9}.real-aircraft-marker.terminal .plane-glyph{font-size:16px}.real-aircraft-marker.surface .plane-glyph{font-size:19px}
+.player-aircraft-marker small{border-color:rgba(74,185,255,.75);color:#bfe8ff}
+
+
+/* v0.8 — high-end realism restore */
+.quick-aircraft-filters{display:flex;gap:8px;flex-wrap:wrap;max-width:1500px;margin:0 auto 14px}
+.quick-aircraft-filters button{border:1px solid #cbd8e2;background:#fff;color:#183a55;border-radius:999px;padding:8px 12px;font-weight:750;cursor:pointer}
+.aircraft-card.photo-card{overflow:hidden;padding:0!important}.aircraft-card.photo-card>header,.aircraft-card.photo-card>.spec-grid,.aircraft-card.photo-card>.price-row{margin-left:14px;margin-right:14px}.aircraft-card.photo-card>.price-row{margin-bottom:14px}
+.aircraft-photo{height:150px;position:relative;background:#dfe8ee;overflow:hidden}.aircraft-photo img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}.aircraft-card:hover .aircraft-photo img{transform:scale(1.025)}
+.aircraft-photo:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 48%,rgba(4,20,33,.64))}
+.aircraft-photo-overlay{position:absolute;z-index:2;left:10px;right:10px;bottom:9px;display:flex;justify-content:space-between;align-items:end;color:#fff;font-size:10px;font-weight:800}.level-lock{background:#0b1f2dcc;border:1px solid #ffffff55;border-radius:7px;padding:4px 6px}.special-role{display:inline-block;margin-top:5px;font-size:10px;font-weight:800;color:#8a5b12;background:#fff5dc;border:1px solid #ecd8a3;border-radius:99px;padding:4px 7px}
+.aircraft-modal-hero{min-height:240px;border-radius:18px;overflow:hidden;position:relative;margin-bottom:16px;background:#dce7ee}.aircraft-modal-hero img{width:100%;height:260px;object-fit:cover;display:block}.aircraft-modal-hero:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(3,18,30,.82),rgba(3,18,30,.05) 72%)}.aircraft-modal-hero>div{position:absolute;z-index:2;left:24px;bottom:22px;color:white}.aircraft-modal-hero h1{margin:2px 0 4px;font-size:34px}.aircraft-modal-hero .eyebrow{color:#9ddcff}
+
+.premium-dark-view{background:linear-gradient(180deg,#f7f9fb,#eef3f6)}.image-panel{position:relative;border-radius:20px;overflow:hidden;border:1px solid #cbd9e4;background:#0a1c2c;box-shadow:0 15px 38px #17334e18;margin-bottom:14px}.image-panel img{width:100%;display:block;max-height:520px;object-fit:cover}.image-panel-copy{position:absolute;left:20px;bottom:20px;background:#071827d9;color:white;border:1px solid #ffffff28;border-radius:14px;padding:12px 16px;backdrop-filter:blur(12px)}.image-panel-copy b,.image-panel-copy span{display:block}.image-panel-copy b{font-size:20px}.image-panel-copy span{color:#bed0dc;margin-top:3px}
+.premium-grid-three{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px}.brand-choice{text-align:center}.brand-choice img{height:70px;max-width:160px;margin:8px auto 16px;display:block}.locked-feature-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px}.locked-feature-row span{color:#718596}
+.career-premium{display:grid;grid-template-columns:1fr 1fr;gap:14px}.career-premium>section:last-child{grid-column:1/-1}.career-level-panel{display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center}.career-badge.big{width:110px;height:110px}.career-badge.big b{font-size:46px}.unlock-timeline{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}.unlock-timeline>div{border:1px solid #d4dee6;border-radius:13px;padding:12px;background:#f8fafc}.unlock-timeline>div.done{border-color:#85bba6;background:#f0faf5}.unlock-timeline b,.unlock-timeline span{display:block}.unlock-timeline span{font-size:11px;color:#718492;margin-top:5px}
+
+.special-ops-hero{display:grid;grid-template-columns:320px 1fr;gap:20px;align-items:center;background:#0b1d2b;color:white;border-radius:20px;overflow:hidden;margin-bottom:14px}.special-ops-hero img{width:100%;height:220px;object-fit:cover}.special-ops-hero>div{padding:20px}.special-ops-hero h2{font-size:30px;margin:4px 0}.special-ops-hero p{color:#c6d5df}
+.special-branch-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}.special-branch{background:#fff;border:1px solid #d4dee6;border-radius:17px;padding:15px;display:flex;flex-direction:column;min-height:245px;box-shadow:0 8px 25px #17324a0b}.special-branch.locked{background:#f1f3f5;filter:saturate(.5)}.special-branch .special-icon{font-size:30px}.special-branch h3{margin:10px 0 6px}.special-branch p{font-size:12px;color:#708290;flex:1}.special-meta{display:flex;justify-content:space-between;gap:8px;align-items:end;margin:8px 0 10px}.special-meta span{font-size:10px;color:#667b8d}.special-meta b{font-size:12px}.contract-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.contract-card{border:1px solid #d6e0e7;border-radius:15px;padding:14px;background:#fafcfd}.contract-card.locked{opacity:.62}.contract-country{font-size:10px;font-weight:800;color:#718695}.contract-card h3{margin:6px 0}.contract-card p{color:#708392;font-size:12px}
+.integration-status{display:grid;gap:8px;margin:10px 0}.integration-status>div{border:1px solid #d7e1e8;background:#f7fafc;border-radius:12px;padding:10px 12px;display:flex;justify-content:space-between;gap:12px}.integration-status .ok{border-color:#88c6a8;background:#eef9f3}.integration-status .bad{border-color:#e5a5aa;background:#fff3f3}.integration-status b{font-size:12px}
+
+@media(max-width:1000px){.special-branch-grid{grid-template-columns:repeat(2,1fr)}.premium-grid-three{grid-template-columns:1fr 1fr}.unlock-timeline{grid-template-columns:1fr 1fr}.career-premium{grid-template-columns:1fr}.career-premium>section:last-child{grid-column:auto}}
+@media(max-width:760px){.premium-grid-three,.contract-grid,.special-branch-grid,.unlock-timeline{grid-template-columns:1fr}.special-ops-hero{grid-template-columns:1fr}.special-ops-hero img{height:160px}.aircraft-photo{height:190px}.locked-feature-row{grid-template-columns:1fr}.career-level-panel{grid-template-columns:1fr}.image-panel img{max-height:340px}}
+
+/* v0.8 — special operations: real visual references + no browser prompt */
+.special-ops-photo-hero{align-items:stretch;overflow:hidden}
+.special-visual-duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-width:42%;max-width:520px}
+.special-visual-duo img{width:100%;height:240px;object-fit:cover;object-position:top;border-radius:16px;border:1px solid rgba(95,185,255,.18);filter:saturate(.9) contrast(1.02)}
+.special-hub-picker{display:grid;gap:6px;margin:12px 0 10px;color:var(--muted,#9aa9b8);font-size:.78rem;text-transform:uppercase;letter-spacing:.06em}
+.special-hub-picker select{width:100%;background:#071521;color:#f4f8fb;border:1px solid rgba(95,185,255,.22);border-radius:10px;padding:10px 12px;text-transform:none;letter-spacing:0}
+@media(max-width:760px){.special-ops-photo-hero{display:block}.special-visual-duo{max-width:none;min-width:0;margin-bottom:14px}.special-visual-duo img{height:180px}}
+
+.live-status{display:inline-flex;align-items:center;gap:.35rem;padding:.48rem .7rem;border:1px solid rgba(140,190,220,.22);border-radius:999px;background:rgba(4,17,28,.72);font-size:.72rem;color:#c9d8e4;backdrop-filter:blur(12px)}.live-status.ok{color:#8ee8a2;border-color:rgba(80,200,120,.32)}.live-status.warn{color:#f2cf70;border-color:rgba(220,170,70,.32)}.live-status.bad{color:#ff8d8d;border-color:rgba(230,80,80,.34)}
