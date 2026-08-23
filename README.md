@@ -1,26 +1,19 @@
-# SKYLINE AIRWAYS — v1.3 Premium Operations
+# SKYLINE AIRWAYS — v1.3.1 Relevant OPS
 
-Build basée sur le véritable projet SKYLINE AIRWAYS transmis dans la conversation : FastAPI, SQLAlchemy, MapLibre, catalogue embarqué et interface v1.1 premium.
+Build FastAPI/SQLAlchemy/MapLibre du projet SKYLINE AIRWAYS. Cette révision remplace la dépendance NOTAM payante de v1.3 par une veille opérationnelle gratuite et ciblée.
 
-## Ce que v1.3 apporte
+## v1.3.1
 
-- Globe OPS FR24 mondial : compteur mondial, snapshot tuilé, avions en vol + sol, interpolation visuelle, diagnostic des limites d'abonnement.
-- Météo générale robuste : Open-Meteo puis MET Norway en secours.
-- METAR / TAF : AviationWeather.gov côté serveur.
-- NOTAM réels : Aviation Edge, clé serveur optionnelle mais nécessaire pour activer les données.
-- Catalogue : photos paresseuses du type exact via catalogue local puis Wikimedia Commons.
-- Fiche avion fermable de façon fiable.
-- Hubs premium : achat et améliorations verrouillés par niveau/prérequis/argent, effets réellement appliqués.
-- Alliances premium : niveaux, objectifs, membres, réseau, économies, rôles et améliorations communes profitant à tous les membres.
-- Niveau & quêtes refondus + cinq Prochaines ères avec effets économiques réels.
-- Secours / Sécurité civile / opérations stratégiques refondus et interactifs.
-- PWA : invalidation du vieux cache JS/CSS après déploiement.
-
-Voir `CHANGELOG_v1.3.md` pour le détail.
+- NOTAM : **FAA NOTAM Search public**, sans compte et sans clé API.
+- Le jeu n'affiche plus un mur de NOTAM mondial : il surveille uniquement les hubs possédés et les aéroports réellement utilisés comme départ, arrivée ou escale.
+- Les restrictions d'espace aérien à fort impact sont priorisées seulement lorsqu'une route du joueur traverse la zone surveillée. Le texte et la sévérité proviennent des NOTAM live ; Skyline n'invente pas une fermeture.
+- Météo aviation : METAR/TAF et SIGMET mondiaux via **AviationWeather.gov**, sans clé. Les SIGMET sont filtrés contre les corridors des routes du joueur.
+- Météo générale : Open-Meteo avec MET Norway en secours.
+- Globe : seuls les risques pertinents pour la compagnie sont ajoutés à la carte OPS.
+- FR24 : snapshot mondial tuilé, en vol + au sol, avec distinction entre trafic suivi par FR24 et positions réellement livrées par le plan API.
+- Le reste de v1.3 est conservé : hubs verrouillés par niveau/argent, alliances avec avantages communs, R&D/ères, opérations spécialisées, catalogue et fiches aéronef.
 
 ## Déploiement Render
-
-Le dépôt est prévu pour un Web Service Python :
 
 ```text
 Build: pip install -r requirements.txt
@@ -28,7 +21,7 @@ Start: uvicorn main:app --host 0.0.0.0 --port $PORT
 Health: /health
 ```
 
-Variables obligatoires/automatiques :
+Variables principales :
 
 ```text
 DATABASE_URL=<PostgreSQL Render>
@@ -36,40 +29,40 @@ SECRET_KEY=<secret>
 FR24_API_TOKEN=<token FR24 production>
 ```
 
-Pour les NOTAM réels :
+Aucune clé NOTAM, METAR, TAF ou SIGMET n'est nécessaire. Options de cache :
 
 ```text
-AVIATION_EDGE_API_KEY=<clé Aviation Edge>
+OPS_NOTAM_CACHE_SECONDS=600
+OPS_SIGMET_CACHE_SECONDS=180
+OPS_WATCH_FIRS=
 ```
 
-Le fichier `render.yaml` contient les placeholders `sync: false` pour les secrets.
+`OPS_WATCH_FIRS` est facultatif et permet d'ajouter d'autres FIR à la veille prioritaire, séparées par des virgules.
 
-## FR24
-
-Ne juge plus le Globe avec l'ancien « 13 positions / 6 sol » : ce chiffre venait d'un test local. Utilise :
+## Endpoints aviation
 
 ```text
-/api/integrations/fr24/world-summary
+/api/aviation/metar?icao=LFPG
+/api/aviation/taf?icao=LFPG
+/api/aviation/notams?icao=LFPG
+/api/aviation/notam/status
+/api/ops/intelligence
 ```
 
-Il indique combien de positions FR24 suit mondialement et combien ton abonnement a réellement livré au snapshot SKYLINE. Voir `FR24_SETUP_v1.3.md`.
-
-## NOTAM
-
-Voir `NOTAM_SETUP_v1.3.md`.
+`/api/ops/intelligence` renvoie uniquement les alertes utiles au réseau du joueur : hubs, départs/arrivées, météo sévère et restrictions croisant ses propres rotations.
 
 ## Tests
 
 ```bash
 python -m py_compile main.py models.py logic.py catalog.py
-node --check static/game-v130.js
+node --check static/game-v131.js
 python tests/smoke_v13.py
 ```
 
 ## Base de données
 
-`skyline.db` n'est volontairement pas livré : il peut contenir les comptes/progressions locaux. `data/catalog.sqlite` est le catalogue aéronautique embarqué. Render utilise PostgreSQL et SQLAlchemy crée les nouvelles tables v1.3 automatiquement.
+`skyline.db` n'est volontairement pas livré : il peut contenir les comptes/progressions locaux. `data/catalog.sqlite` reste le catalogue aéronautique embarqué. Render utilise PostgreSQL.
 
-## Droits
+## Limites des sources
 
-Le prototype contient des marques, logos, livrées et photographies de référence. Toute diffusion commerciale nécessite une revue des licences/droits. Les contenus tiers chargés dynamiquement doivent conserver l'attribution requise par leur fournisseur.
+FAA NOTAM Search est un service public de consultation et non une API développeur avec SLA. Skyline utilise donc un cache et un comportement de repli propre. AviationWeather.gov est la source publique pour METAR/TAF/SIGMET. Ces données sont destinées au gameplay et à l'immersion du simulateur, pas à la préparation d'un vol réel.
