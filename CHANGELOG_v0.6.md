@@ -1,30 +1,22 @@
-# SKYLINE AIRWAYS v0.6 — Aviation Premium
+# Changelog v0.6 — Premium Realism
 
-## Direction artistique
-- Refonte vers une interface aviation contemporaine, premium et crédible.
-- Suppression du rendu trop « sci-fi » au profit de cartes claires, surfaces blanches/bleu aviation et statuts opérationnels sobres.
-- Navigation et panneaux adaptés à iPhone.
-
-## Hub
-- Les panneaux « Explore ton aéroport » sont désormais fermés par défaut.
-- Les inspecteurs s'ouvrent uniquement lorsqu'un élément est sélectionné et la croix les referme réellement.
-- Remplacement des pastilles de progression par des étiquettes lisibles : nom, état, niveau / verrouillage.
-- Ajout d'un bandeau KPI : satisfaction, niveau et identité du hub.
-- Identité spécifique selon le profil de l'aéroport : CDG, Nice, Limoges et profils génériques.
-- Les pistes, taxiways, gates et actifs réels restent branchés au réseau cartographique existant.
-
-## Globe
-- Le panneau « Globe 360° » est fermé par défaut.
-- Contrôles plus sobres, trafic et météo conservés.
-
-## Progression
-- Affichage d'un niveau de carrière calculé à partir de la taille de flotte, hubs, routes, réputation et exploitation.
-- Satisfaction du hub affichée en pourcentage.
-
-## Ergonomie
-- La création d'une rotation est traitée comme un panneau de travail responsive plutôt qu'un écran visuellement bloquant.
-- Thème global optimisé pour un jeu de gestion aérienne réaliste.
-
-## Compatibilité
-- Conservé : comptes, base de données, flotte, routes, hubs, achats, personnel, finance, marketing, hôtels, livrées, cockpit, météo et trafic.
-- Compatible avec le déploiement Render existant et la base PostgreSQL existante.
+- Nouvelle page Accueil premium réaliste.
+- Nouvelle charte visuelle claire aviation / corporate.
+- Niveau joueur + XP + phases de carrière.
+- Quêtes quotidiennes réclamables avec argent + XP.
+- Satisfaction calculée indépendamment pour chaque hub.
+- Profils locaux CDG / NCE / LIG + profils génériques mondiaux.
+- Inspecteurs hub/globe fermés par défaut : correction des overlays bloquants.
+- Terminaux OSM ajoutés à la couche de surface quand disponibles.
+- Gates, parkings et pistes verrouillés restent gris et visibles.
+- Services du hub masqués par défaut pour réduire le bruit visuel.
+- Équipage recruté manuellement mais affecté automatiquement.
+- Long-courrier : équipage cockpit renforcé simulé.
+- Couverture équipage et risque fatigue visibles.
+- Banques réelles localisées par pays avec offres différentes.
+- Nouveaux prêts bancaires v0.6 persistants.
+- Partenaires hôteliers proposés par hub et progression.
+- Construction d’hôtel verrouillée avant le niveau joueur 20.
+- Formulaire de création de rotation repliable sur mobile.
+- Rafraîchissement de l’état porté à 12 s pour limiter la charge Render.
+- Service Worker v0.6 et cache `premium.css`.

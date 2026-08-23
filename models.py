@@ -216,3 +216,27 @@ class HubAsset(Base):
     lat: Mapped[float]=mapped_column(Float)
     purchase_price: Mapped[float]=mapped_column(Float,default=0)
     purchased_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class DailyQuestClaim(Base):
+    __tablename__='daily_quest_claims_v6'
+    __table_args__=(UniqueConstraint('user_id','quest_date','quest_code',name='uq_v6_daily_quest_claim'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    quest_date: Mapped[str]=mapped_column(String(16),index=True)
+    quest_code: Mapped[str]=mapped_column(String(64),index=True)
+    cash_reward: Mapped[float]=mapped_column(Float,default=0)
+    xp_reward: Mapped[int]=mapped_column(Integer,default=0)
+    claimed_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class BankLoanV6(Base):
+    __tablename__='bank_loans_v6'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    bank_id: Mapped[str]=mapped_column(String(64),index=True)
+    bank_name: Mapped[str]=mapped_column(String(120))
+    principal: Mapped[float]=mapped_column(Float)
+    outstanding: Mapped[float]=mapped_column(Float)
+    apr: Mapped[float]=mapped_column(Float)
+    term_months: Mapped[int]=mapped_column(Integer)
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    last_accrued_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))

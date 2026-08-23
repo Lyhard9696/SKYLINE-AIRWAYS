@@ -26,6 +26,7 @@ services:
         value: '1'
       - key: MALLOC_ARENA_MAX
         value: '2'
-      - key: FR24_REFRESH_SECONDS
-        value: '45'
-
+      - key: FR24_API_TOKEN
+        sync: false
+      - key: FR24_API_BASE_URL
+        value: 'https://fr24api.flightradar24.com/api'

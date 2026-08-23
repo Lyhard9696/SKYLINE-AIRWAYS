@@ -1,11 +1,11 @@
 {
-  "name": "SKYLINE AIRWAYS — Immersive World",
+  "name": "SKYLINE AIRWAYS — Premium Realism",
   "short_name": "SKYLINE",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#06111d",
-  "theme_color": "#06111d",
-  "description": "Simulation de compagnie aérienne, hubs mondiaux, globe 3D, météo et cockpit dynamique.",
+  "background_color": "#f7f8fa",
+  "theme_color": "#f7f8fa",
+  "description": "Simulation premium de compagnie aérienne : hubs réels, progression, équipages automatiques, globe OPS et finance géolocalisée.",
   "icons": [
     {"src":"/static/icon-192.png","sizes":"192x192","type":"image/png"},
     {"src":"/static/icon-512.png","sizes":"512x512","type":"image/png"}

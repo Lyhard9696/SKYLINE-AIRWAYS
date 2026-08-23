@@ -1,177 +1,10 @@
-# SKYLINE AIRWAYS v0.6.1 — REAL DATA & LIVERIES
+# SKYLINE AIRWAYS — v0.6 PREMIUM REALISM
 
-Cette mise à jour ajoute un branchement Flightradar24 officiel plus complet et une bibliothèque de presets de livrées de compagnies réelles pour le prototype privé.
+Mise à jour jouable de SKYLINE AIRWAYS pour Render, iPhone/iPad et PC. Cette version conserve le moteur full-stack de la v0.5.1 Stability et refond l’expérience autour d’une interface plus réaliste, plus claire et moins « science-fiction ».
 
-## Flightradar24
+## Installation depuis GitHub
 
-Le backend utilise l'endpoint officiel `live/flight-positions/full` dès que `FR24_API_TOKEN` est défini dans Render. Il récupère position, altitude, vitesse, cap, immatriculation, type, origine, destination et opérateur. Le hub **et** le globe utilisent désormais cette source en priorité. OpenSky reste le fallback automatique si le token est absent, invalide ou à court de crédits. Le token reste uniquement côté serveur.
-
-Dans Render → Environment, renseigne :
-
-```text
-FR24_API_TOKEN=ton_token_officiel
-FR24_REFRESH_SECONDS=45
-```
-
-Ne mets jamais le token dans GitHub. Les données FR24 ne sont gardées que dans un petit cache RAM de quelques dizaines de secondes.
-
-## Livrées réelles / presets
-
-Le Livery Studio contient maintenant des presets pour Air France, easyJet, Lufthansa, Emirates, KLM, British Airways, Qatar Airways, Turkish Airlines, Singapore Airlines, ANA, Japan Airlines, Qantas, Delta, United, American, Air Canada, SWISS, Iberia, TAP, Ryanair, Wizz Air et Etihad.
-
-Ces presets appliquent automatiquement palette, dérive, moteurs, accent, style et wordmark. Ils restent modifiables ensuite. Pour rester distribuable, le ZIP ne contient pas les fichiers graphiques propriétaires exacts des logos; le moteur est prêt à utiliser des assets dédiés plus tard.
-
-# SKYLINE AIRWAYS — v0.5 REALISM OPERATIONS
-
-Version Web full-stack jouable, pensée pour Render, iPhone/iPad et PC. Cette version garde la carrière v0.4 et ajoute une couche de gestion beaucoup plus profonde : personnel, pricing, finance, banque, marketing, partenariats, hôtels, service à bord, opérations au sol, hub réellement achetable et trafic réel optionnel.
-
-## Mise à jour depuis v0.4
-
-La v0.5 est conçue pour être déposée directement par-dessus la v0.4 dans le même dépôt GitHub. Les nouvelles tables PostgreSQL sont créées automatiquement au démarrage. Les comptes, hubs, avions et routes existants sont conservés.
-
-## Temps de simulation
-
-`SIM_SPEED = 3.0`.
-
-Le temps simulé avance trois fois plus vite que le temps réel : un vol de 8 heures réelles de block-time dure environ 2 h 40 dans le jeu, soit ~33 % de sa durée réelle. Les phases sol sont elles aussi simulées : nettoyage, catering, ravitaillement, embarquement, pushback, roulage, vol, roulage arrivée et débarquement.
-
-## Personnel
-
-Nouvel espace **Gestion → Personnel** :
-- commandants / copilotes ;
-- PNC ;
-- mécaniciens ;
-- agents de piste ;
-- RH ;
-- directeur marketing ;
-- directeur des opérations ;
-- directeur financier.
-
-Les pilotes ont des qualifications par famille d'appareil. Si l'effectif n'est pas suffisant, OPS peut utiliser du personnel contractuel, mais cela augmente fortement le coût du vol.
-
-## Prix des billets et demande
-
-Chaque ligne possède maintenant :
-- prix Economy ;
-- Premium ;
-- Business ;
-- First ;
-- frais bagages ;
-- taux de surbooking.
-
-Le remplissage estimé varie avec le prix, la réputation, le niveau de service, les campagnes marketing et les partenariats. Le détail de rentabilité est recalculé avant validation.
-
-## Finance / banque
-
-Nouvel espace **Gestion → Finance / Banque** :
-- trésorerie ;
-- masse salariale ;
-- dette ;
-- historique des transactions ;
-- résultats par vol ;
-- emprunts bancaires ;
-- taux d'intérêt ;
-- remboursement partiel.
-
-Chaque rotation terminée produit une fiche de vol avec passagers, recettes, coûts et bénéfice/perte.
-
-## Marketing, partenariats et hôtels
-
-Le joueur peut :
-- recruter un directeur marketing ;
-- lancer des campagnes publicitaires ;
-- signer des partenariats ;
-- développer des accords hôteliers ;
-- construire ses propres hôtels dans ses hubs ;
-- agrandir progressivement ces hôtels.
-
-## Service à bord et appareil
-
-Chaque avion peut recevoir des améliorations indépendantes :
-- Wi-Fi ;
-- repas ;
-- divertissement ;
-- confort cabine ;
-- formation du service cabine ;
-- standard de nettoyage.
-
-Ces niveaux ont un coût mais influencent l'attractivité et la rentabilité des vols.
-
-## Studio de livrée
-
-Le rendu avion a été remplacé par un aperçu SVG spécifique au type d'aéronef au lieu d'un simple pictogramme. Sont personnalisables :
-- fuselage ;
-- couleur secondaire ;
-- accent ;
-- dérive ;
-- moteurs ;
-- ventre ;
-- nez ;
-- motif ;
-- taille et position du logo.
-
-Ce studio reste un éditeur 2D Web. Des modèles 3D photoréalistes et les livrées officielles des compagnies nécessitent des assets 3D et les droits/licences correspondants.
-
-## Cockpit dynamique
-
-La vue cockpit est une caméra d'observation, pas un simulateur pilotable :
-- cadre cockpit fixe ;
-- paysage satellite qui avance avec l'avion ;
-- cap suivi automatiquement ;
-- altitude / vitesse / carburant / phase de vol ;
-- ciel jour, crépuscule ou nuit en fonction de la position ;
-- étoiles et éclairage nocturne ;
-- couverture nuageuse issue de la météo locale ;
-- pluie et effets d'orage lorsqu'ils sont cohérents avec la météo.
-
-Le vrai cockpit 3D de chaque A320/A350/777/etc., les nuages volumétriques et le relief photoréaliste sont une étape Unreal Engine ultérieure. Cette version stabilise la logique Web d'observation dynamique.
-
-## Hub interactif
-
-La vue aérienne garde le fond satellite et les données OpenStreetMap lorsqu'elles sont disponibles. La v0.5 ajoute :
-- portes réelles cliquables ;
-- positions de parking cliquables ;
-- pistes visibles ;
-- infrastructure non acquise affichée comme verrouillée / grisée ;
-- achat directement depuis la vue aérienne ;
-- services de hub avec cadenas/prérequis ;
-- niveaux multiples ;
-- véhicules de service associés à la phase réelle de l'avion ;
-- déplacements sur le réseau de taxiway lorsqu'un réseau OSM exploitable existe.
-
-Les phases de service au sol sont liées au vol : nettoyage, catering, fuel, passagers et pushback ne sont plus seulement des éléments décoratifs.
-
-## Trafic aérien réel
-
-La v0.5 n'imite pas ou ne scrape pas le site Flightradar24.
-
-- Si la variable Render `FR24_API_TOKEN` est configurée avec un abonnement API Flightradar24 autorisé, le serveur utilise l'API officielle Live Flight Positions.
-- Sans token FR24, le jeu essaie OpenSky dans la zone visible.
-- Le globe n'ajoute plus les anciens faux avions décoratifs lorsqu'un trafic réel peut être interrogé.
-
-Le fond satellite est indépendant du fournisseur de trafic aérien.
-
-## Météo et globe
-
-- globe MapLibre 3D ;
-- rotation 360° ;
-- représentation approximative jour/nuit sur le globe ;
-- radar RainViewer lorsque disponible ;
-- météo locale Open-Meteo dans le cockpit ;
-- routes et avions SKYLINE en temps simulé.
-
-## Données / réalisme
-
-Le catalogue embarqué conserve les données v0.4 :
-- 85k+ aéroports/héliports/bases ;
-- 591 types d'aéronefs ;
-- variantes et motorisations selon les données disponibles.
-
-Les vraies livrées, marques et modèles 3D officiels ne sont pas distribués avec ce prototype sans licence.
-
-## Déploiement Render
-
-Le dépôt doit garder à sa racine :
+Décompresse le ZIP puis envoie **le contenu du dossier** à la racine du dépôt GitHub existant. Les fichiers doivent rester organisés ainsi :
 
 ```text
 main.py
@@ -186,33 +19,187 @@ static/
 templates/
 ```
 
-Le Blueprint Render existant peut être conservé. Le `render.yaml` utilise la même base `skyline-db`.
+Tu peux laisser Render redéployer automatiquement après le commit.
 
-### Option Flightradar24 officielle
-
-Dans Render → service `skyline-airways` → Environment, ajouter si tu possèdes un abonnement API autorisé :
+Commit conseillé :
 
 ```text
-FR24_API_TOKEN=ton_token_api
+SKYLINE v0.6 Premium Realism
 ```
 
-Cette variable est facultative. Sans elle, le reste du jeu fonctionne et le trafic tente OpenSky.
+La base PostgreSQL existante reste compatible. Les nouvelles tables v0.6 sont créées automatiquement au démarrage.
+
+## Nouveautés principales
+
+### Nouvelle direction visuelle
+
+- interface aviation premium contemporaine ;
+- palette claire blanc cassé / bleu aviation / or discret ;
+- cartes et images satellite restent au centre du jeu ;
+- moins d’éléments « futuristes » et davantage d’ergonomie de vraie application de gestion aérienne ;
+- nouvelle page **Accueil** avec progression, KPI, hub principal, quêtes, équipages et vols en cours ;
+- navigation mobile simplifiée à six onglets ;
+- menu « Plus » pour les écrans secondaires.
+
+### Niveau joueur et progression
+
+Le niveau joueur est calculé à partir de :
+
+- rotations réellement terminées ;
+- quêtes quotidiennes récupérées ;
+- hubs ;
+- avions ;
+- routes ;
+- personnel ;
+- améliorations des hubs ;
+- réputation gagnée.
+
+Les grandes phases affichées dans le jeu sont : Fondateur, Compagnie internationale, Groupe aérien puis Opérateur mondial.
+
+### Quêtes quotidiennes
+
+Trois objectifs journaliers dynamiques :
+
+- rotations terminées ;
+- passagers transportés ;
+- satisfaction du hub principal.
+
+Une quête terminée peut être récupérée depuis l’accueil et donne de l’argent + de l’XP.
+
+### Satisfaction propre à chaque hub
+
+Chaque hub possède désormais :
+
+- une note de satisfaction globale ;
+- ponctualité ;
+- embarquement ;
+- sécurité ;
+- bagages ;
+- confort ;
+- accès.
+
+La note dépend notamment des améliorations du hub, infrastructures acquises, personnel disponible et congestion opérationnelle.
+
+### CDG, Nice, Limoges et profils locaux
+
+La v0.6 ajoute une couche de profil réaliste pour différencier les hubs. Exemples :
+
+- **CDG / LFPG** : grand hub intercontinental, RER B, TGV, RoissyBus, taxi/VTC ;
+- **Nice / LFMN** : hub premium méditerranéen, tram L2/L3, tourisme, business et saisonnalité ;
+- **Limoges / LFBL** : aéroport régional, bus/navette, route, taxi et développement progressif.
+
+Le moteur possède aussi des profils pour plusieurs grands hubs mondiaux et un comportement générique selon la catégorie réelle de l’aéroport.
+
+### Hub aérien amélioré
+
+- les fenêtres « Explore ton aéroport » et « Globe 360 » ne bloquent plus l’écran au chargement ;
+- les inspecteurs sont fermés par défaut et ne s’ouvrent qu’après un clic utile ;
+- les terminaux OpenStreetMap sont maintenant récupérés lorsque disponibles ;
+- terminaux, pistes, taxiways, gates et parkings restent visibles sur le fond satellite ;
+- gates/parkings/pistes non acquis restent gris/verrouillés ;
+- les anciennes grosses pastilles d’amélioration ne sont plus l’affichage principal ;
+- les marqueurs de services sont masqués par défaut et peuvent être activés avec le bouton Services.
+
+### Équipages : recrutement manuel, affectation automatique
+
+Le joueur recrute ses pilotes et PNC mais ne crée pas les plannings à la main.
+
+OPS calcule automatiquement :
+
+- qualification appareil ;
+- pilotes disponibles au hub ;
+- pilotes requis sur le vol ;
+- équipage renforcé sur long-courrier ;
+- effectif recommandé pour permettre la rotation et le repos ;
+- couverture du pool équipage ;
+- risque fatigue ;
+- personnel contractuel temporaire si l’effectif réellement requis manque.
+
+Exemple : un court/moyen-courrier utilise normalement 2 pilotes en service, mais un pool de 4 pilotes par appareil est recommandé pour que l’exploitation reste confortable. Un très long-courrier peut utiliser 4 pilotes sur le même vol et nécessiter un pool plus important pour les rotations suivantes.
+
+### Banques réelles par pays
+
+L’espace Finance propose désormais des banques différentes selon le pays du hub principal, sans intégrer leurs logos dans le dépôt.
+
+Exemples :
+
+- France : BNP Paribas, Crédit Agricole, Société Générale, Caisse d’Épargne, HSBC Continental Europe ;
+- Royaume-Uni : HSBC UK, Barclays, Lloyds Bank ;
+- États-Unis : JPMorgan Chase, Bank of America, Citi ;
+- Japon : MUFG, SMBC ;
+- Émirats : Emirates NBD, First Abu Dhabi Bank ;
+- Espagne : Santander, BBVA, CaixaBank ;
+- Mexique : BBVA México, Banorte, HSBC México.
+
+Chaque banque possède un taux de base, un plafond, un niveau joueur minimal et un positionnement différent.
+
+### Hôtels géolocalisés
+
+L’espace Hôtels distingue :
+
+1. **partenariats hôteliers** proposés selon le marché du hub ;
+2. **hôtels appartenant au groupe**, beaucoup plus tardifs.
+
+Les partenariats demandent un niveau joueur et une satisfaction minimum. Construire son propre hôtel demande le niveau joueur 20 et une satisfaction de hub d’au moins 70 %.
+
+### Création de rotation sur iPhone
+
+Le formulaire de création de ligne est désormais replié sur mobile. Il ne prend plus tout l’écran en permanence : le bouton « Créer une nouvelle rotation » l’ouvre uniquement quand le joueur en a besoin.
+
+## Simulation des vols
+
+`SIM_SPEED = 3.0` : environ 33 % du temps réel.
+
+Un vol de 8 h réelles dure donc environ 2 h 40 dans le jeu. Les phases sol restent simulées : nettoyage, catering, ravitaillement, embarquement, pushback, taxi, vol, taxi arrivée et débarquement.
+
+## Globe, trafic et météo
+
+- MapLibre en projection globe ;
+- fond satellite Esri ;
+- radar météo RainViewer lorsque disponible ;
+- Open-Meteo pour les conditions cockpit ;
+- couche jour/nuit ;
+- routes SKYLINE ;
+- avions SKYLINE ;
+- trafic FR24 si `FR24_API_TOKEN` officiel est configuré ;
+- sinon OpenSky lorsqu’il répond.
+
+## Données embarquées
+
+- 85k+ aéroports/héliports/bases ;
+- 591 types d’aéronefs ;
+- données pistes ;
+- catalogue avion et variantes selon les données disponibles.
+
+## Render / stabilité
+
+Le `render.yaml` conserve :
+
+- un seul Web Service ;
+- PostgreSQL `skyline-db` ;
+- `MALLOC_ARENA_MAX=2` ;
+- caches mémoire bornés ;
+- limites de trafic et géométrie OSM adaptées aux 512 Mo du plan gratuit.
 
 ## Vérifications effectuées avant packaging
 
 - compilation Python ;
-- validation syntaxique JavaScript avec Node ;
+- syntaxe JavaScript validée avec Node ;
 - création de compte ;
-- achat d'un hub ;
-- leasing d'un avion ;
-- personnalisation de livrée ;
-- amélioration Wi-Fi ;
-- recrutement ;
-- création de route ;
-- tarification ;
-- campagne marketing ;
-- emprunt ;
-- partenariat ;
-- construction d'hôtel ;
-- lecture finance / état / hub.
+- achat de CDG ;
+- lecture du nouvel état v0.6 ;
+- calcul niveau joueur ;
+- calcul satisfaction hub ;
+- quêtes quotidiennes ;
+- catalogue bancaire France ;
+- prêt BNP Paribas + remboursement ;
+- offres hôtelières géolocalisées ;
+- chargement de la page jeu avec `premium.css`.
 
+## Important
+
+Cette version reste un prototype personnel Web. Les noms de marques réelles utilisés comme données de jeu ne signifient aucun partenariat ou affiliation officielle. Une diffusion commerciale nécessitera une revue juridique/licences des marques, livrées et contenus tiers.
+
+## v0.7.1 — FR24 READY
+
+See `FR24_SETUP.md` for secure Flightradar24 configuration and diagnostics. See `REALISM_3D_ROADMAP.md` for the Unreal Engine / Pixel Streaming path to photorealistic cockpits, volumetric clouds and fully 3D airports.
