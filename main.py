@@ -1,4 +1,4 @@
-import os, math, json, base64, hashlib, hmac, secrets, time, random, threading
+import os, math, json, base64, hashlib, hmac, secrets, time, random, threading, re, html
 from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -15,13 +15,13 @@ from itsdangerous import URLSafeSerializer, BadSignature
 from sqlalchemy import create_engine, select, delete, func
 from sqlalchemy.orm import sessionmaker
 
-from models import (Base, User, CompanyProfile, UserHub, HubUpgrade, Aircraft, Route,
+from models import (Base, User, CompanyProfile, UserHub, HubUpgrade, HubConstruction, Aircraft, Route,
     Employee, RouteSettings, AircraftService, AircraftLiveryDetail, FlightRecord, RouteProgress,
     FinanceTransaction, Loan, MarketingCampaign, Partner, HotelProperty, HubAsset, DailyQuestClaim, BankLoanV6, SpecialBase, SpecialContract,
-    GameWallet, ShopEntitlement, AirlineAllianceMembership, PlayerAlliance, PlayerAllianceMember, AllianceMessage, CompanyResearch, HRPolicy, IPOState, AllianceBenefitLog, AllianceGoalClaim)
+    GameWallet, ShopEntitlement, AirlineAllianceMembership, PlayerAlliance, PlayerAllianceMember, AllianceMessage, CompanyResearch, HRPolicy, IPOState, AllianceBenefitLog, AllianceGoalClaim, AllianceUpgrade)
 from catalog import (
     search_airports, airport_detail, major_airports, search_aircraft, aircraft_detail,
-    aircraft_manufacturers, search_airlines, longest_runway_m
+    aircraft_manufacturers, search_airlines, longest_runway_m, airport_countries, special_base_airports
 )
 from logic import (
     UPGRADES, UPGRADE_BY_CODE, SIM_SPEED, upgrade_price, hub_level, destination_point,
@@ -39,7 +39,7 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='1.2.0')
+app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.6')
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware('http')
@@ -297,6 +297,26 @@ ALLIANCE_WEEKLY_GOALS=[
     {'code':'collective_savings','name':'Économiser 1 M€ grâce aux bonus','metric':'savings','target':1000000,'xp_reward':1800,'cash_reward':300000},
 ]
 
+ALLIANCE_UPGRADES={
+    'fuel_contract':{'name':'Contrats carburant groupés','icon':'⛽','description':'Négociation mondiale du Jet A-1 pour tous les membres.','max_level':5,'min_alliance_level':2,'costs':[300000,900000,2200000,5000000,9000000],'per_level':{'fuel':-1.2}},
+    'crew_academy':{'name':'Académie équipages','icon':'♙','description':'Formation mutualisée pilotes, PNC et équipes OPS.','max_level':5,'min_alliance_level':2,'costs':[250000,750000,1800000,4200000,8000000],'per_level':{'training':-2.0}},
+    'maintenance_pool':{'name':'Pool maintenance','icon':'⚙','description':'Stocks, mécaniciens et contrats MRO partagés.','max_level':5,'min_alliance_level':3,'costs':[350000,1000000,2500000,5500000,10000000],'per_level':{'maintenance':-1.5}},
+    'procurement_desk':{'name':'Centrale achats flotte','icon':'✈','description':'Achats et leasing négociés à l’échelle de l’alliance.','max_level':5,'min_alliance_level':4,'costs':[500000,1400000,3200000,7000000,12500000],'per_level':{'aircraft_purchase':-1.0,'aircraft_lease':-0.7}},
+    'network_office':{'name':'Bureau réseau & codeshare','icon':'⌁','description':'Ouverture de lignes, coordination des hubs et correspondances.','max_level':5,'min_alliance_level':3,'costs':[300000,900000,2300000,5200000,9500000],'per_level':{'route_creation':-2.0,'demand':0.5}},
+    'lounge_network':{'name':'Réseau de salons','icon':'♛','description':'Salons partagés, fidélité et expérience premium commune.','max_level':5,'min_alliance_level':5,'costs':[600000,1600000,3600000,7800000,14000000],'per_level':{'demand':0.8,'reputation':0.6}},
+}
+
+def alliance_upgrade_state(db,alliance_id,alliance_level=None):
+    rows={x.code:x for x in db.scalars(select(AllianceUpgrade).where(AllianceUpgrade.alliance_id==alliance_id)).all()}
+    out=[];bonuses={}
+    for code,cfg in ALLIANCE_UPGRADES.items():
+        row=rows.get(code);level=max(0,min(cfg['max_level'],int(row.level if row else 0)))
+        for category,value in cfg['per_level'].items():bonuses[category]=bonuses.get(category,0)+value*level
+        next_cost=cfg['costs'][level] if level<cfg['max_level'] else 0
+        unlocked=(alliance_level or 1)>=cfg['min_alliance_level']
+        out.append({'code':code,**cfg,'level':level,'next_cost':next_cost,'unlocked':unlocked,'maxed':level>=cfg['max_level'],'invested':round(float(row.invested if row else 0),2),'current_bonuses':{k:round(v*level,2) for k,v in cfg['per_level'].items()},'next_bonuses':{k:round(v*(level+1),2) for k,v in cfg['per_level'].items()} if level<cfg['max_level'] else {}})
+    return out,{k:round(v,2) for k,v in bonuses.items()}
+
 def player_alliance_level(xp):
     xp=max(0,int(xp or 0));current=PLAYER_ALLIANCE_LEVELS[0]
     for row in PLAYER_ALLIANCE_LEVELS:
@@ -337,7 +357,10 @@ def company_modifier_payload(db,u,levels=None,progress=None):
     pm=db.scalar(select(PlayerAllianceMember).where(PlayerAllianceMember.user_id==u.id))
     pa=db.get(PlayerAlliance,pm.alliance_id) if pm else None
     pl=player_alliance_level(pa.xp) if pa else None
-    if pa and pl:add('player_alliance',f'{pa.name} · niv. {pl["level"]}',pl.get('bonuses',{}),'player')
+    if pa and pl:
+        add('player_alliance',f'{pa.name} · niv. {pl["level"]}',pl.get('bonuses',{}),'player')
+        _,upgrade_bonuses=alliance_upgrade_state(db,pa.id,pl['level'])
+        add('alliance_upgrades',f'{pa.name} · améliorations communes',upgrade_bonuses,'player')
     for bucket in (totals,alliance_totals,player_alliance_totals,airline_alliance_totals):
         for k in list(bucket):bucket[k]=max(-45,min(25,bucket[k]))
     return {'totals':totals,'alliance_totals':alliance_totals,'player_alliance_totals':player_alliance_totals,
@@ -346,6 +369,12 @@ def company_modifier_payload(db,u,levels=None,progress=None):
 
 def modifier_factor(mods,category):
     return max(.55,min(1.25,1+float((mods or {}).get('totals',{}).get(category,0))/100))
+
+def effective_reputation(user,modifier_payload):
+    """Reputation used by demand/economy, including persistent alliance lounge bonuses."""
+    bonus=float((modifier_payload or {}).get('totals',{}).get('reputation',0) or 0)
+    return max(0.0,min(100.0,float(user.reputation or 0)+bonus))
+
 
 def record_alliance_saving(db,u,mods,category,base_amount,final_amount,label=''):
     alliance_pct=float((mods or {}).get('player_alliance_totals',{}).get(category,0) or 0)
@@ -405,8 +434,8 @@ def settle_economy(db,u):
             route_effective={'fuel':0.0,'maintenance':0.0};route_player_saved={'fuel':0.0,'maintenance':0.0}
             for leg_index in range(prog.completed_legs+1,upper+1):
                 outbound=(leg_index%2)==1
-                fo,fd=(o,d) if outbound else (d,o)
-                econ=economy_detailed(fo,fd,spec,u.reputation,cfg,sdict,marketing,partner_bonus,st['cost_factor'],research_cost_factor(db,u.id,spec,research_lv,fuel_factor_extra),maintenance_factor,demand_bonus)
+                fo,fd=(o,d) if outbound else (d,o);hub_bonus=hub_commercial_bonus(db,u.id,fo.get('ident'))
+                econ=economy_detailed(fo,fd,spec,effective_reputation(u,mods),cfg,sdict,marketing,partner_bonus+hub_bonus['ancillary_revenue_pct'],st['cost_factor'],research_cost_factor(db,u.id,spec,research_lv,fuel_factor_extra),maintenance_factor,demand_bonus+hub_bonus['demand_bonus'])
                 # Track the portion saved specifically by the player's persistent alliance.
                 # Era and airline-alliance effects remain separate and are not falsely credited to the player alliance.
                 for cat in ('fuel','maintenance'):
@@ -682,7 +711,7 @@ def hub_satisfaction(db,u,ident,airport=None):
     baggage=avg(['BAGGAGE','GROUND_FLEET'],5.0)
     security=avg(['SECURITY','BORDER','CUSTOMS','FIRE','MEDICAL'],3.5)
     comfort=avg(['TOILETS','WIFI','SIGNAGE','LOUNGE_BUS','LOUNGE_FIRST','FOOD'],3.2)
-    access=avg(['TRANSIT','PARK_SHORT','PARK_LONG','PARK_PREM'],4.0)
+    access=avg(['TRANSIT','RAIL','METRO','BUS','SHUTTLE','TAXI_ACCESS','RIDESHARE','CAR_RENTAL','PARK_SHORT','PARK_LONG','PARK_PREM'],4.0)
     operations=avg(['TAXI','PUSHBACK','FUEL','OPS','LINE_MAINT'],3.2)
     assets=db.scalar(select(func.count()).select_from(HubAsset).where(HubAsset.user_id==u.id,HubAsset.airport_ident==ident)) or 0
     staff=db.scalar(select(func.count()).select_from(Employee).where(Employee.user_id==u.id,Employee.home_hub==ident)) or 0
@@ -724,7 +753,7 @@ def daily_quests(db,u):
 
 # -------- Page routes --------
 @app.get('/health')
-def health():return {'status':'ok','version':'1.2.0','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
+def health():return {'status':'ok','version':'1.3.6','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
 
 @app.get('/')
 def root(request:Request):
@@ -857,6 +886,344 @@ def api_aircraft_detail(code:str,request:Request):
 def api_airlines(q:str='',limit:int=40):return search_airlines(q,limit)
 
 # -------- Hub APIs --------
+FEATURED_HUB_CODES=['RJTT','MMMX','OMDB','KJFK','EGLL','WSSS','YSSY','EDDF','EHAM','OTHH','KLAX','SBGR']
+
+
+def hub_required_player_level(airport,owned_count=0):
+    """Progressive hub-acquisition gate used by both UI and server validation."""
+    if owned_count<=0:return 1
+    typ=(airport or {}).get('type')
+    price=float((airport or {}).get('price') or 0)
+    lvl=1 if typ in ('small_airport','heliport') else 3 if typ=='medium_airport' else 5
+    if price>=120_000_000:lvl=max(lvl,20)
+    elif price>=70_000_000:lvl=max(lvl,15)
+    elif price>=35_000_000:lvl=max(lvl,10)
+    elif price>=18_000_000:lvl=max(lvl,6)
+    # Opening many hubs should require a more mature company, without blocking normal expansion.
+    lvl+=max(0,owned_count-3)*2
+    return min(60,int(lvl))
+
+
+def upgrade_required_hub_level(node):
+    """Hub-level gate: grey/locked until the hub is mature enough."""
+    cat=(node or {}).get('cat','')
+    base={'Airside':1,'Terminal':1,'Sécurité':2,'Commercial':2,'Premium':3,'Technique':2,'Cargo':3,'Infrastructure':2}.get(cat,1)
+    cost=float((node or {}).get('cost') or 0)
+    if cost>=5_000_000:base+=2
+    elif cost>=2_500_000:base+=1
+    if (node or {}).get('prereq'):base+=1
+    return min(12,base)
+
+
+HUB_SERVICE_BRANDS={
+    'RAIL':['/static/brands/sncf.svg'],
+    'METRO':[],
+    'BUS':[],
+    'SHUTTLE':[],
+    'TAXI_ACCESS':[],
+    'RIDESHARE':['/static/brands/uber.svg','/static/brands/bolt.svg'],
+    'CAR_RENTAL':[],
+    'HOTEL':['/static/brands/novotel.svg','/static/brands/ibis.svg','/static/brands/sheraton.svg'],
+    'DUTYFREE':['/static/brands/relay.svg','/static/brands/rolex.svg','/static/brands/laduree.svg'],
+}
+
+# v1.3.3: the map shows broad airport zones. Detailed upgrades only appear after
+# the player opens a zone, which keeps the hub readable even with dozens of systems.
+HUB_ZONE_DEFS=[
+    {'code':'terminal','icon':'▦','title':'Terminal & passagers','root':'TERMINAL','bearing':286,'dist':390,'summary':'Débit passagers, sûreté, commerces et expérience premium.',
+     'children':['TERMINAL','CHECKIN','SELFSERVICE','BOARDING','ARRIVALS','BAGGAGE','TOILETS','WIFI','SIGNAGE','SECURITY','BORDER','CUSTOMS','DUTYFREE','RETAIL','FOOD','LOUNGE_BUS','LOUNGE_FIRST','SLEEP','FASTTRACK']},
+    {'code':'mobility','icon':'⌁','title':'Accès & mobilité','root':'TRANSIT','bearing':326,'dist':980,'summary':'Train, transports urbains, bus, taxis, VTC, parkings et hôtels.',
+     'children':['TRANSIT','RAIL','METRO','BUS','SHUTTLE','TAXI_ACCESS','RIDESHARE','CAR_RENTAL','PARK_SHORT','PARK_LONG','PARK_PREM','HOTEL']},
+    {'code':'airside','icon':'✈','title':'Pistes, portes & trafic','root':'GATES_CONTACT','bearing':92,'dist':760,'summary':'Postes avions, taxiways, carburant et moyens de piste.',
+     'children':['GATES_CONTACT','GATES_REMOTE','WIDEBODY','REGIONAL','APRON','TAXI','DEICING','FUEL','PUSHBACK','GROUND_FLEET']},
+    {'code':'operations','icon':'◈','title':'Technique & opérations','root':'OPS','bearing':178,'dist':1040,'summary':'Maintenance, équipages, catering, IT et contrôle des opérations.',
+     'children':['OPS','LINE_MAINT','HEAVY_MAINT','PARTS','CATERING','CABIN_SERVICE','CLEANING','CREW','TRAINING','IT']},
+    {'code':'safety','icon':'✚','title':'Sécurité & résilience','root':'FIRE','bearing':145,'dist':1320,'summary':'Secours aéroportuaire, médical, crise et résilience technique.',
+     'children':['FIRE','MEDICAL','CRISIS','SUSTAIN','WATER']},
+    {'code':'cargo','icon':'▣','title':'Cargo & logistique','root':'CARGO','bearing':244,'dist':1460,'summary':'Fret, chaîne froide, express et charges hors gabarit.',
+     'children':['CARGO','CARGO_COLD','CARGO_EXPRESS','CARGO_HEAVY']},
+]
+
+HUB_MOBILITY_EXPLICIT={
+    'LFPG':{
+        'RAIL':('Gare TGV / RER','SNCF · RER B / TGV'),
+        'METRO':('RATP / liaison urbaine','RATP · CDGVAL / Grand Paris'),
+        'BUS':('Bus & RoissyBus','Réseau francilien'),
+        'SHUTTLE':('Navettes terminaux & hôtels','CDGVAL / navettes'),
+        'TAXI_ACCESS':('Taxis officiels Paris','Stations réglementées'),
+        'RIDESHARE':('Uber / Bolt · zone VTC','VTC Paris'),
+        'CAR_RENTAL':('Location de voitures','Loueurs aéroport'),
+    },
+    'LFBL':{
+        'BUS':('Bus & lignes locales','Réseau local de Limoges'),
+        'SHUTTLE':('Navettes aéroport','Centre-ville / hôtels'),
+        'TAXI_ACCESS':('Taxis','Station aéroport'),
+        'RIDESHARE':('Uber / VTC','Prise en charge VTC'),
+        'CAR_RENTAL':('Location de voitures','Loueurs aéroport'),
+    },
+    'LFMN':{
+        'METRO':('Tram L2 / L3','Lignes d’Azur'),
+        'BUS':('Bus & lignes urbaines','Lignes d’Azur'),
+        'SHUTTLE':('Navettes hôtels & centre','Navettes Côte d’Azur'),
+        'TAXI_ACCESS':('Taxis officiels','Stations terminaux'),
+        'RIDESHARE':('Uber / VTC','Zone VTC'),
+        'CAR_RENTAL':('Location de voitures','Centre des loueurs'),
+    },
+    'KJFK':{
+        'RAIL':('AirTrain + LIRR','Jamaica Station / LIRR'),
+        'METRO':('Connexion MTA Subway','A / E via AirTrain'),
+        'BUS':('Bus & coaches','MTA / opérateurs privés'),
+        'SHUTTLE':('Navettes hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('NYC Yellow Taxi','Taxi dispatch'),
+        'RIDESHARE':('Uber / Lyft · rideshare','App pickup zones'),
+        'CAR_RENTAL':('Rental cars','Federal Circle'),
+    },
+    'OMDB':{
+        'METRO':('Dubai Metro','Red Line'),
+        'BUS':('Dubai Bus','RTA Dubai'),
+        'SHUTTLE':('Navettes hôtels','Hotel shuttles'),
+        'TAXI_ACCESS':('Dubai Taxi','RTA Taxi'),
+        'RIDESHARE':('Uber / Careem · VTC','App pickup zones'),
+        'CAR_RENTAL':('Location de voitures','Rental car desks'),
+    },
+    'EGLL':{
+        'RAIL':('Elizabeth line / Heathrow Express','TfL / Heathrow Express'),
+        'METRO':('London Underground','Piccadilly line'),
+        'BUS':('Bus & coaches','TfL / National Express'),
+        'SHUTTLE':('Hotel Hoppa / navettes','Hotel shuttles'),
+        'TAXI_ACCESS':('London taxis','Taxi ranks'),
+        'RIDESHARE':('Uber / VTC','Private hire pickup'),
+        'CAR_RENTAL':('Car rental','Airport rental centres'),
+    },
+    'RJTT':{
+        'RAIL':('Tokyo Monorail / Keikyu','Monorail · Keikyu'),
+        'BUS':('Airport Limousine Bus','Tokyo bus network'),
+        'SHUTTLE':('Navettes terminaux / hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('Taxis Tokyo','Taxi stands'),
+        'RIDESHARE':('VTC / réservation digitale','Pickup zones'),
+        'CAR_RENTAL':('Location de voitures','Rental car counters'),
+    },
+    'MMMX':{
+        'METRO':('Metro CDMX','Ligne 5 / réseau urbain'),
+        'BUS':('Metrobús / bus','Réseau CDMX'),
+        'SHUTTLE':('Navettes terminaux / hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('Taxis autorizados','Taxi kiosks'),
+        'RIDESHARE':('Uber / VTC','App pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental counters'),
+    },
+    'WSSS':{
+        'METRO':('MRT Changi','East West / Thomson-East Coast'),
+        'BUS':('Bus Singapore','Public buses'),
+        'SHUTTLE':('Navettes terminaux / hôtels','Changi shuttles'),
+        'TAXI_ACCESS':('Taxi Singapore','Taxi stands'),
+        'RIDESHARE':('Grab / VTC','App pickup zones'),
+        'CAR_RENTAL':('Location de voitures','Rental counters'),
+    },
+    'YSSY':{
+        'RAIL':('Airport Link','Sydney Trains'),
+        'BUS':('Bus Sydney','Public buses'),
+        'SHUTTLE':('Navettes hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('Sydney taxis','Taxi ranks'),
+        'RIDESHARE':('Uber / VTC','Rideshare pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental car centre'),
+    },
+    'SBGR':{
+        'RAIL':('CPTM Airport Express','Linha 13-Jade'),
+        'BUS':('Bus / Airport Bus Service','Réseau São Paulo'),
+        'SHUTTLE':('Navettes terminaux / hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('Táxi Guarulhos','Taxi stands'),
+        'RIDESHARE':('Uber / VTC','App pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental counters'),
+    },
+    'EHAM':{
+        'RAIL':('NS · gare Schiphol','Nederlandse Spoorwegen'),
+        'BUS':('Bus Amsterdam / Schiphol','Réseau régional'),
+        'SHUTTLE':('Navettes hôtels','Hotel shuttles'),
+        'TAXI_ACCESS':('Taxis Schiphol','Taxi stands'),
+        'RIDESHARE':('Uber / VTC','App pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental desks'),
+    },
+    'EDDF':{
+        'RAIL':('DB Fernbahnhof / S-Bahn','Deutsche Bahn'),
+        'BUS':('Bus Frankfurt','Réseau régional'),
+        'SHUTTLE':('Navettes hôtels','Hotel shuttles'),
+        'TAXI_ACCESS':('Taxis Frankfurt','Taxi stands'),
+        'RIDESHARE':('VTC','App pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental car centre'),
+    },
+    'LEMD':{
+        'RAIL':('Cercanías Renfe','Renfe'),
+        'METRO':('Metro de Madrid','Ligne 8'),
+        'BUS':('Bus EMT / interurbains','Madrid'),
+        'SHUTTLE':('Navettes terminaux / hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('Taxi Madrid','Taxi stands'),
+        'RIDESHARE':('Uber / Cabify · VTC','App pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental counters'),
+    },
+    'LIRF':{
+        'RAIL':('Leonardo Express / FL1','Trenitalia'),
+        'BUS':('Bus Rome / coaches','Réseau Rome'),
+        'SHUTTLE':('Navettes hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('Taxi Roma','Taxi stands'),
+        'RIDESHARE':('VTC','App pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental centre'),
+    },
+    'LTFM':{
+        'METRO':('Métro Istanbul','M11'),
+        'BUS':('Havaist / bus','Istanbul'),
+        'SHUTTLE':('Navettes hôtels','Airport shuttles'),
+        'TAXI_ACCESS':('Taxi Istanbul','Taxi stands'),
+        'RIDESHARE':('VTC / réservation digitale','App pickup'),
+        'CAR_RENTAL':('Location de voitures','Rental counters'),
+    },
+}
+
+
+_HUB_CONTEXTUAL_CODES={'RAIL','METRO','BUS','SHUTTLE','TAXI_ACCESS','RIDESHARE','CAR_RENTAL'}
+
+def _hub_mobility_context(airport):
+    ident=str((airport or {}).get('ident') or '').upper();explicit=HUB_MOBILITY_EXPLICIT.get(ident)
+    if explicit is not None:return explicit
+    # Unknown airports get only modes that are broadly plausible. We never invent a
+    # metro/rail link just because the airport is large.
+    return {
+        'BUS':('Bus / transport local','Réseau local'),
+        'SHUTTLE':('Navettes aéroport','Navettes locales'),
+        'TAXI_ACCESS':('Taxis','Station aéroport'),
+        'RIDESHARE':('VTC / réservation digitale','Opérateurs disponibles localement'),
+        'CAR_RENTAL':('Location de voitures','Loueurs aéroport'),
+    }
+
+def _hub_service_context(airport,node,current_level=0):
+    code=node.get('code');ctx=_hub_mobility_context(airport)
+    if code not in _HUB_CONTEXTUAL_CODES:return {'available':True,'label':None,'provider':None}
+    item=ctx.get(code)
+    # Preserve an already purchased legacy upgrade even if the location profile later changes.
+    if not item and current_level>0:return {'available':True,'label':node.get('name'),'provider':'Service existant'}
+    if not item:return {'available':False,'label':None,'provider':None,'reason':'Ce service n’existe pas dans le profil de mobilité de cet aéroport.'}
+    return {'available':True,'label':item[0],'provider':item[1]}
+
+def _hub_service_brands(airport,node,current_level=0):
+    ident=str((airport or {}).get('ident') or '').upper();country=str((airport or {}).get('country') or '').upper();code=node.get('code')
+    # Visual partner marks are context-aware. Generic transport badges are local SVGs,
+    # while user-supplied brand assets (Uber, SNCF, Rolex, hotels...) are reused only
+    # where the service actually exists.
+    if code=='TRANSIT':
+        if ident=='LFPG':return ['/static/brands/sncf.svg','/static/brands/rer.svg','/static/brands/ratp.svg']
+        return ['/static/brands/bus.svg','/static/brands/taxi.svg']
+    if code=='RAIL':
+        if ident=='LFPG':return ['/static/brands/sncf.svg','/static/brands/rer.svg']
+        if country in ('FR','FRA','FRANCE'):return ['/static/brands/sncf.svg','/static/brands/ter.svg']
+        return []
+    if code=='METRO':
+        if ident=='LFPG':return ['/static/brands/ratp.svg','/static/brands/metro.svg']
+        return ['/static/brands/metro.svg'] if ident in {'LFMN','KJFK','OMDB','EGLL','MMMX'} else []
+    if code=='BUS':return ['/static/brands/bus.svg']
+    if code=='SHUTTLE':return ['/static/brands/bus.svg']
+    if code=='TAXI_ACCESS':return ['/static/brands/taxi.svg']
+    if code=='RIDESHARE':
+        return ['/static/brands/uber.svg','/static/brands/bolt.svg'] if ident.startswith('LF') else ['/static/brands/uber.svg','/static/brands/vtc.svg']
+    if code=='BORDER':return ['/static/brands/paf.svg'] if ident.startswith('LF') else []
+    if code=='SECURITY':return ['/static/brands/groupeadp.svg'] if ident=='LFPG' else []
+    if code=='HOTEL':
+        prof=hub_reality_profile(airport);assets=[]
+        mapping={'novotel':'novotel.svg','novotel suites':'novotel.svg','ibis':'ibis.svg','ibis styles':'ibis.svg','sheraton':'sheraton.svg','pullman':'pullman.svg',
+                 'marriott':'marriott.svg','courtyard by marriott':'marriott.svg','hilton':'hilton.svg','hampton by hilton':'hilton.svg','ihg':'ihg.svg',
+                 'campanile':'campanile.svg','kyriad':'kyriad.svg','best western':'bestwestern.svg'}
+        for name in prof.get('hotel_brands',[]):
+            f=mapping.get(str(name).lower())
+            if f and f'/static/brands/{f}' not in assets:assets.append(f'/static/brands/{f}')
+        return assets[:4]
+    if code=='DUTYFREE':return ['/static/brands/relay.svg'] if ident=='LFPG' else []
+    if code=='RETAIL':return ['/static/brands/rolex.svg'] if ident=='LFPG' else []
+    if code=='FOOD':return ['/static/brands/laduree.svg'] if ident=='LFPG' else []
+    if code=='LOUNGE_BUS' and ident=='LFPG':return ['/static/brands/airfrance.svg']
+    if code=='TERMINAL' and ident=='LFPG':return ['/static/brands/groupeadp.svg']
+    return []
+
+def _hub_display_name(airport,node,current_level=0):
+    code=str((airport or {}).get('code') or '').upper();n=node.get('name','');ctx=_hub_service_context(airport,node,current_level)
+    if ctx.get('label'):return ctx['label']
+    if code=='CDG':
+        return {'TERMINAL':'Terminal 2E','BORDER':'Police aux frontières','DUTYFREE':'Duty Free · Terminal 2E'}.get(node.get('code'),n)
+    return n
+
+def _hub_zone_name(airport,zone):
+    ident=str((airport or {}).get('ident') or '').upper();z=zone['code']
+    if z=='terminal':return 'Terminal 2E' if ident=='LFPG' else 'Terminal passagers'
+    if z=='mobility':
+        return {'LFPG':'Gare TGV / RER & mobilité','LFBL':'Accès bus / VTC / parkings','LFMN':'Tram / bus / VTC','KJFK':'AirTrain / rail / mobilité','OMDB':'Métro / VTC / mobilité','EGLL':'Rail / Underground / mobilité'}.get(ident,'Accès & mobilité')
+    return zone['title']
+
+def _hub_zone_payload(airport,nodes):
+    by={n['code']:n for n in nodes};out=[]
+    for z in HUB_ZONE_DEFS:
+        children=[by[c] for c in z['children'] if c in by and (by[c].get('context_available',True) or by[c].get('level',0)>0)]
+        if not children:continue
+        states=[x.get('state') for x in children]
+        root=by.get(z['root']) or {}
+        # A broad zone is unlocked by its root infrastructure. Child services never make
+        # a locked terminal look green by accident.
+        root_state=root.get('state','locked')
+        state='construction' if root_state=='construction' else ('active' if root.get('level',0)>0 else ('available' if root_state=='available' else 'locked'))
+        lat,lon=destination_point(airport['lat'],airport['lon'],z['bearing'],z['dist'])
+        out.append({
+            'code':z['code'],'icon':z['icon'],'name':_hub_zone_name(airport,z),'title':z['title'],'summary':z['summary'],'state':state,
+            'lat':lat,'lon':lon,'root_code':z['root'],'root_level':(root or {}).get('level',0),'root_state':(root or {}).get('state','locked'),
+            'operational_count':sum(1 for x in children if x.get('level',0)>0),'construction_count':sum(1 for x in children if x.get('state')=='construction'),
+            'available_count':sum(1 for x in children if x.get('state')=='available'),'upgrade_count':len(children),'children':children,
+        })
+    return out
+
+def _hub_construction_seconds(node,target_level):
+    # Short enough to be playable/testable while keeping a real works phase.
+    cost=float(node.get('cost') or 0);base=120+int(min(780,cost/25000))
+    return int(min(1800,base+max(0,target_level-1)*45))
+
+def _hub_utc(dt):
+    if dt is None:return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+def _settle_hub_constructions(db,user_id,ident):
+    now=now_utc();rows=db.scalars(select(HubConstruction).where(HubConstruction.user_id==user_id,HubConstruction.airport_ident==ident)).all();changed=False
+    for job in rows:
+        completes=_hub_utc(job.completes_at)
+        if completes and completes<=now:
+            up=db.scalar(select(HubUpgrade).where(HubUpgrade.user_id==user_id,HubUpgrade.airport_ident==ident,HubUpgrade.code==job.code))
+            if not up:
+                up=HubUpgrade(user_id=user_id,airport_ident=ident,code=job.code,level=0);db.add(up)
+            up.level=max(up.level,int(job.target_level or up.level+1));db.delete(job);changed=True
+    if changed:db.flush()
+    return changed
+
+def hub_commercial_bonus(db,user_id,ident):
+    """Real gameplay bonus produced by passenger-facing hub investments."""
+    if not ident:return {'ancillary_revenue_pct':0.0,'demand_bonus':0.0}
+    owned=db.scalar(select(UserHub).where(UserHub.user_id==user_id,UserHub.airport_ident==ident))
+    if not owned:return {'ancillary_revenue_pct':0.0,'demand_bonus':0.0}
+    lv=hub_levels(db,user_id,ident)
+    # Extra ancillary revenue is expressed as a share of ticket revenue; demand is a multiplier delta.
+    ancillary=(lv.get('DUTYFREE',0)*.0025 + lv.get('RETAIL',0)*.0022 + lv.get('FOOD',0)*.0018 +
+               lv.get('HOTEL',0)*.0015 + lv.get('LOUNGE_BUS',0)*.0018 + lv.get('LOUNGE_FIRST',0)*.0023 +
+               lv.get('PARK_SHORT',0)*.0008 + lv.get('PARK_LONG',0)*.0008 + lv.get('PARK_PREM',0)*.0010)
+    demand=(lv.get('TRANSIT',0)*.0020 + lv.get('RAIL',0)*.0018 + lv.get('METRO',0)*.0015 + lv.get('BUS',0)*.0007 + lv.get('SHUTTLE',0)*.0006 + lv.get('TAXI_ACCESS',0)*.0005 + lv.get('RIDESHARE',0)*.0008 + lv.get('CAR_RENTAL',0)*.0005 +
+            lv.get('BORDER',0)*.0013 + lv.get('SECURITY',0)*.0010 + lv.get('WIFI',0)*.0008 +
+            lv.get('TOILETS',0)*.0006 + lv.get('BAGGAGE',0)*.0010 + lv.get('SIGNAGE',0)*.0007 + lv.get('FASTTRACK',0)*.0012)
+    return {'ancillary_revenue_pct':round(min(.16,ancillary),4),'demand_bonus':round(min(.10,demand),4)}
+
+@app.get('/api/hubs/network')
+def api_hubs_network(request:Request):
+    with SessionLocal() as db:
+        u=require_user(request,db);owned=user_hubs(db,u);owned_ids={x.airport_ident for x in owned};progress=career_progress(db,u)
+        available=[]
+        for code in FEATURED_HUB_CODES:
+            a=airport_detail(code)
+            if not a or a['ident'] in owned_ids or not a.get('purchasable'):continue
+            required=hub_required_player_level(a,len(owned));level_ok=progress['level']>=required;cash_ok=u.cash>=a['price']
+            available.append({'ident':a['ident'],'airport':{'ident':a['ident'],'code':a['code'],'name':a['name'],'lat':a['lat'],'lon':a['lon'],'type':a['type'],'country':a['country'],'municipality':a['municipality'],'price':a['price'],'runway_count':a.get('runway_count',0)},
+                              'required_player_level':required,'player_level':progress['level'],'level_ok':level_ok,'cash_ok':cash_ok,'unlockable':level_ok and cash_ok})
+        return {'player_level':progress['level'],'cash':u.cash,'available':available[:8]}
+
 @app.get('/api/hubs')
 def api_hubs(request:Request):
     with SessionLocal() as db:
@@ -876,7 +1243,9 @@ def api_buy_hub(req:HubBuyReq,request:Request):
         existing=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==a['ident']))
         if existing:raise HTTPException(400,'Hub déjà possédé')
         price=a['price']
-        first=len(user_hubs(db,u))==0
+        owned=user_hubs(db,u);first=len(owned)==0
+        required_level=hub_required_player_level(a,len(owned));player_level=career_progress(db,u)['level']
+        if player_level<required_level:raise HTTPException(400,f'Niveau joueur {required_level} requis pour ouvrir ce hub')
         if u.cash<price:raise HTTPException(400,'Fonds insuffisants')
         if first:
             for h in user_hubs(db,u):h.is_primary=False
@@ -898,34 +1267,38 @@ def api_hub_state(ident:str,request:Request):
     with SessionLocal() as db:
         u=require_user(request,db);h=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==ident))
         if not h:raise HTTPException(403,'Hub non possédé')
-        a=airport_detail(ident);levels=hub_levels(db,u.id,ident);lvl=hub_level(levels)
+        _settle_hub_constructions(db,u.id,ident);db.commit()
+        a=airport_detail(ident);levels=hub_levels(db,u.id,ident);lvl=hub_level(levels);now=now_utc()
+        jobs={x.code:x for x in db.scalars(select(HubConstruction).where(HubConstruction.user_id==u.id,HubConstruction.airport_ident==ident)).all()}
         nodes=[]
         for n in UPGRADES:
-            current=levels.get(n['code'],0);pre=n.get('prereq');available=(not pre or levels.get(pre,0)>0)
-            lat,lon=destination_point(a['lat'],a['lon'],n['bearing'],n['dist'])
-            nodes.append({**n,'lat':lat,'lon':lon,'level':current,'available':available,'price':upgrade_price(n,current),'state':'active' if current>0 else ('available' if available else 'locked')})
+            current=levels.get(n['code'],0);pre=n.get('prereq');price=upgrade_price(n,current);min_hub_level=upgrade_required_hub_level(n);job=jobs.get(n['code']);context=_hub_service_context(a,n,current)
+            context_ok=bool(context.get('available'));prereq_ok=(not pre or levels.get(pre,0)>0);level_ok=lvl>=min_hub_level;cash_ok=u.cash>=price;can_upgrade=(context_ok and job is None and current<n['max'] and prereq_ok and level_ok and cash_ok)
+            lat,lon=destination_point(a['lat'],a['lon'],n['bearing'],n['dist']);reason=''
+            if not context_ok:reason=context.get('reason') or 'Service non disponible dans cet aéroport'
+            elif job:reason='Travaux en cours'
+            elif current>=n['max']:reason='Niveau maximum atteint'
+            elif not prereq_ok:reason=f'Prérequis : {UPGRADE_BY_CODE[pre]["name"]}'
+            elif not level_ok:reason=f'Hub niveau {min_hub_level} requis'
+            elif not cash_ok:reason='Trésorerie insuffisante'
+            state='unavailable' if not context_ok and current<=0 else ('construction' if job else ('active' if current>0 else ('available' if can_upgrade else 'locked')))
+            remaining=max(0,int(((_hub_utc(job.completes_at)-now).total_seconds()))) if job and job.completes_at else 0
+            nodes.append({**n,'name':_hub_display_name(a,n,current),'provider':context.get('provider'),'context_available':context_ok,'lat':lat,'lon':lon,'level':current,'min_hub_level':min_hub_level,'prereq_ok':prereq_ok,'level_ok':level_ok,'cash_ok':cash_ok,'can_upgrade':can_upgrade,'unlock_reason':reason,'price':price,'state':state,'brands':_hub_service_brands(a,n,current),'construction_remaining_seconds':remaining,'construction_completes_at':_hub_utc(job.completes_at).isoformat() if job and job.completes_at else None,'construction_started_at':_hub_utc(job.started_at).isoformat() if job and job.started_at else None,'construction_target_level':job.target_level if job else None})
         own=[]
         routes=db.scalars(select(Route).where(Route.user_id==u.id)).all();acs={x.id:x for x in db.scalars(select(Aircraft).where(Aircraft.user_id==u.id)).all()}
         for r in routes:
             ac=acs.get(r.aircraft_id)
             if not ac:continue
-            s=serialize_aircraft(ac,r)
-            f=s['flight']
+            ser=serialize_aircraft(ac,r);f=ser['flight']
             if f and ((f['direction']=='origin_ground' and r.origin==ident) or (f['direction']=='dest_ground' and r.destination==ident)):
-                own.append({'aircraft_id':ac.id,'tail':ac.tail,'type':s['spec']['name'],'phase':f['phase'],'status':f['status'],'livery':s['livery']})
-        density={'large_airport':28,'medium_airport':18,'small_airport':9,'heliport':7}.get(a['type'],6)
-        density += min(18,levels.get('GATES_CONTACT',0)+levels.get('GATES_REMOTE',0))
-        assets=db.scalars(select(HubAsset).where(HubAsset.user_id==u.id,HubAsset.airport_ident==ident)).all()
-        sat=hub_satisfaction(db,u,ident,a);reality=hub_reality_profile(a)
-        today=datetime.combine(now_utc().date(),datetime.min.time(),tzinfo=timezone.utc);code=a['code']
-        recs=db.scalars(select(FlightRecord).where(FlightRecord.user_id==u.id,FlightRecord.completed_at>=today,((FlightRecord.origin==code)|(FlightRecord.destination==code)))).all()
-        pax=sum(x.passengers for x in recs);revenue=sum(x.ticket_revenue+x.ancillary_revenue for x in recs);profit=sum(x.profit for x in recs)
-        route_count=db.scalar(select(func.count()).select_from(Route).where(Route.user_id==u.id,Route.origin==ident)) or 0
-        prestige=max(1,min(5,round((sat['score']/100)*2.2+lvl*.45+u.reputation/100*1.2)))
-        return {'airport':a,'hub':{'level':lvl,'is_primary':h.is_primary,'satisfaction':sat,'prestige':prestige,
-                'daily_passengers':pax,'daily_flights':len(recs),'daily_revenue':round(revenue,2),'daily_profit':round(profit,2),'active_routes':route_count},
-                'reality':reality,'nodes':nodes,'own_ground_aircraft':own,'traffic_density':density,
-                'assets':[{'asset_key':x.asset_key,'kind':x.kind,'name':x.name,'lon':x.lon,'lat':x.lat,'purchase_price':x.purchase_price} for x in assets]}
+                own.append({'aircraft_id':ac.id,'tail':ac.tail,'type':ser['spec']['name'],'phase':f['phase'],'status':f['status'],'livery':ser['livery']})
+        density={'large_airport':28,'medium_airport':18,'small_airport':9,'heliport':7}.get(a['type'],6)+min(18,levels.get('GATES_CONTACT',0)+levels.get('GATES_REMOTE',0))
+        assets=db.scalars(select(HubAsset).where(HubAsset.user_id==u.id,HubAsset.airport_ident==ident)).all();sat=hub_satisfaction(db,u,ident,a);reality=hub_reality_profile(a)
+        today=datetime.combine(now_utc().date(),datetime.min.time(),tzinfo=timezone.utc);code=a['code'];recs=db.scalars(select(FlightRecord).where(FlightRecord.user_id==u.id,FlightRecord.completed_at>=today,((FlightRecord.origin==code)|(FlightRecord.destination==code)))).all()
+        pax=sum(x.passengers for x in recs);revenue=sum(x.ticket_revenue+x.ancillary_revenue for x in recs);profit=sum(x.profit for x in recs);route_count=db.scalar(select(func.count()).select_from(Route).where(Route.user_id==u.id,Route.origin==ident)) or 0
+        prestige=max(1,min(5,round((sat['score']/100)*2.2+lvl*.45+u.reputation/100*1.2)));economic_bonus=hub_commercial_bonus(db,u.id,ident)
+        zones=_hub_zone_payload(a,nodes)
+        return {'airport':a,'hub':{'level':lvl,'is_primary':h.is_primary,'satisfaction':sat,'prestige':prestige,'daily_passengers':pax,'daily_flights':len(recs),'daily_revenue':round(revenue,2),'daily_profit':round(profit,2),'active_routes':route_count,'economic_bonus':economic_bonus},'reality':reality,'zones':zones,'nodes':nodes,'own_ground_aircraft':own,'traffic_density':density,'assets':[{'asset_key':x.asset_key,'kind':x.kind,'name':x.name,'lon':x.lon,'lat':x.lat,'purchase_price':x.purchase_price} for x in assets]}
 
 @app.post('/api/hub/upgrade')
 def api_hub_upgrade(req:UpgradeReq,request:Request):
@@ -934,17 +1307,21 @@ def api_hub_upgrade(req:UpgradeReq,request:Request):
     with SessionLocal() as db:
         u=require_user(request,db);h=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==req.ident))
         if not h:raise HTTPException(403,'Hub non possédé')
-        levels=hub_levels(db,u.id,req.ident);cur=levels.get(req.code,0)
+        airport=airport_detail(req.ident);current_existing=hub_levels(db,u.id,req.ident).get(req.code,0);context=_hub_service_context(airport,node,current_existing)
+        if not context.get('available') and current_existing<=0:raise HTTPException(400,context.get('reason') or 'Service non disponible dans cet aéroport')
+        _settle_hub_constructions(db,u.id,req.ident)
+        existing_job=db.scalar(select(HubConstruction).where(HubConstruction.user_id==u.id,HubConstruction.airport_ident==req.ident,HubConstruction.code==req.code))
+        if existing_job:raise HTTPException(400,'Travaux déjà en cours pour cette zone')
+        levels=hub_levels(db,u.id,req.ident);cur=levels.get(req.code,0);current_hub_level=hub_level(levels);required_hub_level=upgrade_required_hub_level(node)
         if cur>=node['max']:raise HTTPException(400,'Niveau maximum atteint')
+        if current_hub_level<required_hub_level:raise HTTPException(400,f'Hub niveau {required_hub_level} requis')
         pre=node.get('prereq')
         if pre and levels.get(pre,0)<=0:raise HTTPException(400,f'Prérequis : {UPGRADE_BY_CODE[pre]["name"]}')
         price=upgrade_price(node,cur)
         if u.cash<price:raise HTTPException(400,'Fonds insuffisants')
-        row=db.scalar(select(HubUpgrade).where(HubUpgrade.user_id==u.id,HubUpgrade.airport_ident==req.ident,HubUpgrade.code==req.code))
-        if not row:row=HubUpgrade(user_id=u.id,airport_ident=req.ident,code=req.code,level=0);db.add(row)
-        row.level+=1;u.cash-=price;log_tx(db,u.id,'hub_upgrade',f'{airport_detail(req.ident)["code"]} · {node["name"]} niv. {row.level}',-price)
-        if node['cat'] in ('Premium','Terminal','Sécurité'):u.reputation=min(100,u.reputation+1)
-        db.commit();return {'ok':True,'level':row.level,'price':price}
+        seconds=_hub_construction_seconds(node,cur+1);job=HubConstruction(user_id=u.id,airport_ident=req.ident,code=req.code,target_level=cur+1,price=price,started_at=now_utc(),completes_at=now_utc()+timedelta(seconds=seconds))
+        u.cash-=price;db.add(job);log_tx(db,u.id,'hub_upgrade',f'{airport_detail(req.ident)["code"]} · {_hub_display_name(airport_detail(req.ident),node,cur)} · travaux niv. {cur+1}',-price);db.commit();db.refresh(job)
+        return {'ok':True,'state':'construction','target_level':cur+1,'price':price,'construction_seconds':seconds,'completes_at':job.completes_at.isoformat(),'cash':u.cash}
 
 # -------- Company identity --------
 @app.post('/api/profile')
@@ -1064,7 +1441,8 @@ def api_route_pricing_get(route_id:int,request:Request):
         cfg={k:getattr(st,k) for k in ('economy_price','premium_price','business_price','first_price','baggage_fee','overbooking_percent')}
         sdict={k:getattr(svc,k) for k in ('wifi','meals','entertainment','comfort','cabin_service','cleaning')}
         crew=crew_status_for(db,u.id,spec,haversine_km(o['lat'],o['lon'],d['lat'],d['lon']),r.origin)
-        mods=company_modifier_payload(db,u);estimate=economy_detailed(o,d,spec,u.reputation,cfg,sdict,active_marketing_boost(db,u.id),partner_revenue_bonus(db,u.id),crew['cost_factor'],research_cost_factor(db,u.id,spec,extra_percent=mods['totals'].get('fuel',0)),modifier_factor(mods,'maintenance'),mods['totals'].get('demand',0)/100)
+        mods=company_modifier_payload(db,u);hub_bonus=hub_commercial_bonus(db,u.id,o.get('ident'))
+        estimate=economy_detailed(o,d,spec,effective_reputation(u,mods),cfg,sdict,active_marketing_boost(db,u.id),partner_revenue_bonus(db,u.id)+hub_bonus['ancillary_revenue_pct'],crew['cost_factor'],research_cost_factor(db,u.id,spec,extra_percent=mods['totals'].get('fuel',0)),modifier_factor(mods,'maintenance'),mods['totals'].get('demand',0)/100+hub_bonus['demand_bonus'])
         return {'settings':cfg,'estimate':estimate,'crew':crew}
 
 @app.post('/api/routes/{route_id}/pricing')
@@ -1345,7 +1723,8 @@ def api_state(request:Request):
             cfg={k:getattr(settings,k) for k in ('economy_price','premium_price','business_price','first_price','baggage_fee','overbooking_percent')}
             sdict={k:getattr(svc,k) for k in ('wifi','meals','entertainment','comfort','cabin_service','cleaning')}
             crew=crew_status_for(db,u.id,s['spec'],haversine_km(o['lat'],o['lon'],d['lat'],d['lon']),r.origin) if o and d else {}
-            econ=economy_detailed(o,d,s['spec'],u.reputation,cfg,sdict,marketing,pbonus,crew.get('cost_factor',1.0),research_cost_factor(db,u.id,s['spec'],extra_percent=mods['totals'].get('fuel',0)),modifier_factor(mods,'maintenance'),mods['totals'].get('demand',0)/100) if o and d else None
+            hub_bonus=hub_commercial_bonus(db,u.id,o.get('ident')) if o else {'ancillary_revenue_pct':0.0,'demand_bonus':0.0}
+            econ=economy_detailed(o,d,s['spec'],effective_reputation(u,mods),cfg,sdict,marketing,pbonus+hub_bonus['ancillary_revenue_pct'],crew.get('cost_factor',1.0),research_cost_factor(db,u.id,s['spec'],extra_percent=mods['totals'].get('fuel',0)),modifier_factor(mods,'maintenance'),mods['totals'].get('demand',0)/100+hub_bonus['demand_bonus']) if o and d else None
             partner=None
             if r.commercial_destination:
                 cd=airport_detail(r.commercial_destination)
@@ -1381,20 +1760,44 @@ class BoundedCache(OrderedDict):
         super().__setitem__(key,value)
         while len(self)>self.maxsize:self.popitem(last=False)
 
-_weather_cache=BoundedCache(96)
-_traffic_cache=BoundedCache(32)
+_weather_cache=BoundedCache(24)
+# Traffic cache stores only small viewport/tile payloads. 16 entries remain well below
+# Render's 512 MB ceiling and avoid refetching identical FR24 tiles while panning.
+_traffic_cache=BoundedCache(10)
 
 @app.get('/api/weather/current')
 def api_weather(lat:float,lon:float):
-    key=(round(lat,1),round(lon,1));now=time.time();cached=_weather_cache.get(key)
+    lat=max(-90,min(90,float(lat)));lon=max(-180,min(180,float(lon)))
+    key=('weather-current',round(lat,2),round(lon,2));now=time.time();cached=_weather_cache.get(key)
     if cached and now-cached[0]<90:return cached[1]
-    url='https://api.open-meteo.com/v1/forecast'
     params={'latitude':lat,'longitude':lon,'current':'temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m','wind_speed_unit':'kn','timezone':'UTC'}
+    errors=[]
+    # Primary provider: Open-Meteo. Retry once because short-lived upstream/CDN failures
+    # should never break the cockpit or OPS page.
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
+                r=client.get('https://api.open-meteo.com/v1/forecast',params=params);r.raise_for_status();data=r.json()
+            cur=data.get('current') or {}
+            if cur:
+                out={'ok':True,'current':cur,'source':'Open-Meteo','provider':'open-meteo','fallback':False}
+                _weather_cache[key]=(now,out);return out
+        except Exception as e:
+            errors.append(f'OpenMeteo:{type(e).__name__}')
+            time.sleep(.12*(attempt+1))
+    # Provider fallback: MET Norway Locationforecast. It is used only when
+    # Open-Meteo is unavailable, then normalized to the same current-weather shape.
     try:
-        with httpx.Client(timeout=5.5) as client:r=client.get(url,params=params);r.raise_for_status();data=r.json()
-        out={'ok':True,'current':data.get('current',{}),'source':'Open-Meteo'}
-    except Exception:
-        out={'ok':False,'current':{},'source':'unavailable'}
+        with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3 contact=admin@skyline.invalid'}) as client:
+            r=client.get('https://api.met.no/weatherapi/locationforecast/2.0/compact',params={'lat':lat,'lon':lon});r.raise_for_status();data=r.json()
+        ts=((data.get('properties') or {}).get('timeseries') or [])[0]
+        details=((ts.get('data') or {}).get('instant') or {}).get('details') or {}
+        next1=((ts.get('data') or {}).get('next_1_hours') or {}).get('details') or {}
+        wind_ms=float(details.get('wind_speed') or 0);gust_ms=float(details.get('wind_speed_of_gust') or wind_ms)
+        cur={'temperature_2m':details.get('air_temperature'),'precipitation':next1.get('precipitation_amount',0),'weather_code':0,'cloud_cover':details.get('cloud_area_fraction',0),'wind_speed_10m':round(wind_ms*1.94384,1),'wind_direction_10m':details.get('wind_from_direction',0),'wind_gusts_10m':round(gust_ms*1.94384,1),'time':ts.get('time')}
+        out={'ok':True,'current':cur,'source':'MET Norway','provider':'met-no','fallback':True,'primary_status':'Open-Meteo temporairement indisponible'}
+    except Exception as e:
+        errors.append(f'METNO:{type(e).__name__}');out={'ok':False,'current':{},'source':'unavailable','provider':'none','fallback':False,'reason':' / '.join(errors[-3:])}
     _weather_cache[key]=(now,out);return out
 
 
@@ -1416,17 +1819,23 @@ def api_weather_radar(request:Request):
     _weather_cache[key]=(now,out);return out
 
 FR24_BASE_URL=os.getenv('FR24_API_BASE_URL','https://fr24api.flightradar24.com/api').rstrip('/')
-FR24_WORLD_CACHE_SECONDS=max(45,min(600,int(os.getenv('FR24_WORLD_CACHE_SECONDS','120'))))
-FR24_WORLD_TILE_LIMIT=max(1000,min(20000,int(os.getenv('FR24_WORLD_TILE_LIMIT','20000'))))
-FR24_WORLD_WORKERS=max(1,min(4,int(os.getenv('FR24_WORLD_WORKERS','3'))))
+FR24_WORLD_CACHE_SECONDS=max(45,min(900,int(os.getenv('FR24_WORLD_CACHE_SECONDS','180'))))
+FR24_WORLD_TILE_LIMIT=max(20,min(2200,int(os.getenv('FR24_WORLD_TILE_LIMIT','2200'))))
+FR24_WORLD_WORKERS=max(1,min(2,int(os.getenv('FR24_WORLD_WORKERS','1'))))
+FR24_WORLD_DETAIL=os.getenv('FR24_WORLD_DETAIL','light').strip().lower()
+if FR24_WORLD_DETAIL not in ('light','full'): FR24_WORLD_DETAIL='light'
+FR24_COUNT_CACHE_SECONDS=max(10,min(120,int(os.getenv('FR24_COUNT_CACHE_SECONDS','30'))))
 FR24_WORLD_TILES=[
     '89.999,30,-179.999,-90','89.999,30,-90,0','89.999,30,0,90','89.999,30,90,179.999',
     '30,-30,-179.999,-90','30,-30,-90,0','30,-30,0,90','30,-30,90,179.999',
     '-30,-89.999,-179.999,-90','-30,-89.999,-90,0','-30,-89.999,0,90','-30,-89.999,90,179.999',
 ]
 _world_fetch_lock=threading.Lock()
-_fr24_airline_cache=BoundedCache(384)
-_aircraft_photo_cache=BoundedCache(512)
+_fr24_airline_cache=BoundedCache(64)
+_aircraft_photo_cache=BoundedCache(32)
+_aircraft_type_photo_cache=BoundedCache(16)
+_fr24_count_cache=BoundedCache(8)
+_fr24_detail_cache=BoundedCache(32)
 
 COMMON_AIRLINES={
     'AFR':'Air France','KLM':'KLM','BAW':'British Airways','DLH':'Lufthansa','SWR':'SWISS','AUA':'Austrian Airlines','IBE':'Iberia','VLG':'Vueling','RYR':'Ryanair','EZY':'easyJet','ITY':'ITA Airways','SAS':'Scandinavian Airlines','FIN':'Finnair','TAP':'TAP Air Portugal','LOT':'LOT Polish Airlines','AEE':'Aegean Airlines','THY':'Turkish Airlines','WZZ':'Wizz Air','BEL':'Brussels Airlines',
@@ -1450,7 +1859,7 @@ def _fr24_headers():
         'Authorization':f'Bearer {_fr24_token()}',
         'Accept':'application/json',
         'Accept-Version':'v1',
-        'User-Agent':'SKYLINE-Airways/1.2'
+        'User-Agent':'SKYLINE-Airways/1.3.6'
     }
 
 def _fr24_normalize(x, airport=None):
@@ -1489,8 +1898,12 @@ def _fr24_normalize(x, airport=None):
 
 def _fetch_fr24(bounds,limit=120,airport=None,modes=('full','light')):
     if not _fr24_token():raise RuntimeError('FR24_API_TOKEN absent')
-    last_error=None;params={'limit':max(1,min(20000,int(limit)))}
+    last_error=None;params={'limit':max(1,min(300,int(limit)))}
     if bounds:params['bounds']=bounds
+    # FR24 also tracks ADS-B ground vehicles. SKYLINE deliberately requests every
+    # aircraft/service category except V (ground vehicles), so trucks/buses never
+    # appear on the hub or globe while real aircraft on the ground remain visible.
+    params['categories']='P,C,M,J,T,H,B,G,D,O,N'
     with httpx.Client(timeout=8.0,headers=_fr24_headers()) as client:
         for mode in modes:
             try:
@@ -1508,37 +1921,64 @@ def _fetch_fr24(bounds,limit=120,airport=None,modes=('full','light')):
     if last_error:raise last_error
     return [],modes[0]
 
+def _fr24_live_count(bounds=None):
+    """Return a filtered FR24 count only when explicit bounds are supplied.
+
+    FR24's live positions count endpoint requires at least one filter.  v1.3.3
+    incorrectly called it without filters for a planet-wide dashboard number, which
+    made the MONDE diagnostic fail even while normal live-position calls worked.
+    We deliberately do not perform a global count here: the globe is viewport-
+    adaptive and a planet-wide count is not needed to render aircraft.
+    """
+    if not _fr24_token():
+        return {'ok':False,'count':0,'reason':'FR24 non configuré'}
+    if not bounds:
+        return {'ok':True,'count':0,'available':False,'reason':'Compteur mondial désactivé en mode mémoire sûre'}
+    key=('count',str(bounds))
+    now=time.time();cached=_fr24_count_cache.get(key)
+    if cached and now-cached[0]<FR24_COUNT_CACHE_SECONDS:
+        return cached[1]
+    try:
+        with httpx.Client(timeout=httpx.Timeout(7.0,connect=3.5),headers=_fr24_headers(),follow_redirects=True) as client:
+            r=client.get(f'{FR24_BASE_URL}/live/flight-positions/count',params={'bounds':bounds})
+            r.raise_for_status();body=r.json()
+        count=None
+        if isinstance(body,(int,float)):
+            count=int(body)
+        elif isinstance(body,dict):
+            # Current/future-compatible common response shapes.
+            for key_name in ('count','total','total_count','live_flight_positions','flight_count'):
+                if isinstance(body.get(key_name),(int,float)):
+                    count=int(body[key_name]);break
+            data=body.get('data')
+            if count is None and isinstance(data,(int,float)):
+                count=int(data)
+            elif count is None and isinstance(data,dict):
+                for key_name in ('count','total','total_count','flight_count','live_flight_positions'):
+                    if isinstance(data.get(key_name),(int,float)):
+                        count=int(data[key_name]);break
+        out={'ok':count is not None,'count':int(count or 0),'available':count is not None}
+        if count is None: out['reason']='Réponse count FR24 non reconnue'
+    except httpx.HTTPStatusError as e:
+        out={'ok':False,'count':0,'available':False,'reason':f'HTTP {e.response.status_code}'}
+    except Exception as e:
+        out={'ok':False,'count':0,'available':False,'reason':type(e).__name__}
+    _fr24_count_cache[key]=(now,out)
+    return out
+
+
 def _fr24_world_snapshot():
-    now=time.time();key=('world-v12',FR24_WORLD_TILE_LIMIT);cached=_traffic_cache.get(key)
-    if cached and now-cached[0]<FR24_WORLD_CACHE_SECONDS:return cached[1]
-    with _world_fetch_lock:
-        cached=_traffic_cache.get(key);now=time.time()
-        if cached and now-cached[0]<FR24_WORLD_CACHE_SECONDS:return cached[1]
-        by_id={};tile_results=[];modes=[]
-        def fetch_tile(bounds):
-            rows,mode=_fetch_fr24(bounds,FR24_WORLD_TILE_LIMIT);return bounds,rows,mode
-        with ThreadPoolExecutor(max_workers=FR24_WORLD_WORKERS) as pool:
-            futures=[pool.submit(fetch_tile,b) for b in FR24_WORLD_TILES]
-            for fut in as_completed(futures):
-                try:
-                    bounds,rows,mode=fut.result();modes.append(mode);tile_results.append({'bounds':bounds,'count':len(rows),'ok':True})
-                    for row in rows:
-                        key_id=row.get('fr24_id') or row.get('id') or f"{row.get('hex')}:{row.get('callsign')}:{row.get('lat')}:{row.get('lon')}"
-                        old=by_id.get(key_id)
-                        if not old or str(row.get('timestamp') or '')>=str(old.get('timestamp') or ''):by_id[key_id]=row
-                except Exception as e:
-                    tile_results.append({'bounds':'unknown','count':0,'ok':False,'error':type(e).__name__})
-        states=list(by_id.values());ground=sum(1 for x in states if x.get('on_ground'));airborne=len(states)-ground
-        mode='full' if modes and all(x=='full' for x in modes) else ('light' if modes and all(x=='light' for x in modes) else 'mixed')
-        out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':mode,
-             'scope':'world','total_count':len(states),'airborne_count':airborne,'ground_count':ground,
-             'tiles_ok':sum(1 for x in tile_results if x['ok']),'tiles_total':len(FR24_WORLD_TILES),'partial':sum(1 for x in tile_results if x['ok'])<len(FR24_WORLD_TILES),
-             'cache_seconds':FR24_WORLD_CACHE_SECONDS,'generated_at':datetime.now(timezone.utc).isoformat(),'tile_results':tile_results}
-        _traffic_cache[key]=(time.time(),out);return out
+    """Compatibility shim kept memory-safe on 512 MB instances.
+
+    v1.3.2 never downloads a planet-sized position snapshot. Callers receive
+    only the global FR24 tracked count; actual positions are loaded through
+    /api/live-traffic/box for the visible viewport.
+    """
+    return {'source':'Flightradar24 API','states':[],'licensed':True,'configured':bool(_fr24_token()),'real_only':True,'fr24_mode':'viewport-adaptive','scope':'world-aggregated','total_count':0,'airborne_count':0,'ground_count':0,'tracked_count':0,'tracked_count_available':False,'coverage_pct':None,'subscription_limited':False,'partial':False,'memory_safe':True,'generated_at':datetime.now(timezone.utc).isoformat()}
 
 def _opensky_hub(a,span):
     params={'lamin':a['lat']-span,'lomin':a['lon']-span,'lamax':a['lat']+span,'lomax':a['lon']+span}
-    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.2'}) as client:
+    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
         r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
     states=[]
     for x in raw[:400]:
@@ -1555,12 +1995,22 @@ def _aviation_weather_product(product,icao,ttl):
     if len(code)!=4:raise HTTPException(400,'Code ICAO invalide')
     key=('aviationweather',product,code);now=time.time();cached=_weather_cache.get(key)
     if cached and now-cached[0]<ttl:return cached[1]
-    try:
-        with httpx.Client(timeout=7.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.2'}) as client:
-            r=client.get(f'https://aviationweather.gov/api/data/{product}',params={'ids':code,'format':'json'});r.raise_for_status();data=r.json()
-        out={'ok':bool(data),'source':'AviationWeather.gov','product':product.upper(),'station':code,'data':data,'raw':(data[0].get('rawOb') if data and isinstance(data[0],dict) else None)}
-    except Exception as e:out={'ok':False,'source':'AviationWeather.gov','product':product.upper(),'station':code,'data':[],'reason':type(e).__name__}
+    errors=[];data=[]
+    for host in ('https://aviationweather.gov','https://connect.aviationweather.gov'):
+        try:
+            with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
+                r=client.get(f'{host}/api/data/{product}',params={'ids':code,'format':'json'});r.raise_for_status();data=r.json()
+            if isinstance(data,list):break
+        except Exception as e:
+            errors.append(f'{host}:{type(e).__name__}');data=[]
+    if isinstance(data,list) and data:
+        first=data[0] if isinstance(data[0],dict) else {}
+        raw=first.get('rawOb') or first.get('rawTAF') or first.get('raw_text') or first.get('raw')
+        out={'ok':True,'source':'AviationWeather.gov','product':product.upper(),'station':code,'data':data,'raw':raw}
+    else:
+        out={'ok':False,'source':'AviationWeather.gov','product':product.upper(),'station':code,'data':[],'reason':' / '.join(errors[-2:]) if errors else 'Aucune donnée'}
     _weather_cache[key]=(now,out);return out
+
 
 @app.get('/api/aviation/metar')
 def api_aviation_metar(request:Request,icao:str):
@@ -1572,17 +2022,332 @@ def api_aviation_taf(request:Request,icao:str):
     with SessionLocal() as db:require_user(request,db)
     return _aviation_weather_product('taf',icao,600)
 
+FAA_NOTAM_URL='https://notams.aim.faa.gov/notamSearch/search'
+OPS_NOTAM_TTL=max(120,int(os.getenv('OPS_NOTAM_CACHE_SECONDS','600')))
+OPS_SIGMET_TTL=max(60,int(os.getenv('OPS_SIGMET_CACHE_SECONDS','180')))
+
+# Live FIR watch is intentionally small and route-relevant.  The default set is
+# Ukraine because its FIR restrictions are long-running and operationally major.
+# Extra FIR codes can be added without a code change through OPS_WATCH_FIRS.
+_DEFAULT_WATCH_FIRS=['UKBV','UKDV','UKFV','UKLV','UKOV']
+OPS_WATCH_FIRS=list(dict.fromkeys(_DEFAULT_WATCH_FIRS+[x.strip().upper() for x in os.getenv('OPS_WATCH_FIRS','').split(',') if x.strip()]))
+OPS_WATCH_REGIONS={
+    # broad envelope only used to decide whether a PLAYER route is near the live
+    # FIR watch.  The actual restriction text/severity always comes from live NOTAMs.
+    'ukraine':{'name':'FIR ukrainiennes','firs':set(_DEFAULT_WATCH_FIRS),'bbox':(22.0,43.5,41.5,53.5)},
+}
+
+def _clean_icao(value):
+    code=''.join(ch for ch in str(value or '').upper() if ch.isalnum())[:4]
+    return code if len(code)==4 else ''
+
+def _notam_text(item):
+    value=item.get('icaoMessage') or item.get('traditionalMessageFrom4thWord') or item.get('plainLanguageMessage') or item.get('condition') or item.get('text') or item.get('notamText') or ''
+    return re.sub(r'\s+',' ',html.unescape(str(value))).strip()
+
+def _notam_risk(text,keyword=''):
+    t=f'{keyword} {text}'.upper()
+    critical=(
+        r'\bAD\s+CLSD\b',r'\bAERODROME\s+CLOSED\b',r'\bAIRPORT\s+CLOSED\b',
+        r'\bRWY\s+[0-9A-Z/\-]+\s+CLSD\b',r'\bRUNWAY\b.{0,35}\bCLOSED\b',
+        r'\bAIRSPACE\b.{0,80}\bPROHIBITED\b',r'\bAIRSPACE\b.{0,80}\bCLOSED\b',
+        r'\bATS\s+IS\s+NOT\s+PROVIDED\b',r'\bNO\s+FLIGHTS?\b',r'\bPROHIBITED\s+FOR\s+ALL\s+AIRCRAFT\b',
+    )
+    important=(
+        r'\bILS\b.{0,45}\b(U/S|UNSERVICEABLE|INOP)\b',r'\bTWY\b.{0,35}\bCLSD\b',
+        r'\bWIP\b',r'\bWORK\s+IN\s+PROGRESS\b',r'\bCRANE\b',r'\bOBST\b',
+        r'\bLIGHT(?:ING|S)?\b.{0,35}\b(U/S|INOP|UNSERVICEABLE)\b',r'\bMILITARY\b',
+        r'\bDANGER\b',r'\bRESTRICTED\b',r'\bTFR\b',r'\bGPS\b.{0,40}\bUNRELIABLE\b',
+    )
+    severity='critical' if any(re.search(p,t) for p in critical) else ('important' if any(re.search(p,t) for p in important) else 'info')
+    if any(k in t for k in ('AIRSPACE','FIR ','UIR ','MILITARY','PROHIBITED','RESTRICTED','TFR')):category='airspace'
+    elif any(k in t for k in ('RWY','RUNWAY')):category='runway'
+    elif any(k in t for k in ('TWY','TAXIWAY')):category='taxiway'
+    elif any(k in t for k in ('ILS','VOR','NDB','DME','GNSS','GPS')):category='navigation'
+    elif any(k in t for k in ('OBST','CRANE','LIGHT')):category='infrastructure'
+    else:category='operations'
+    return severity,category
+
+def _normalize_notam_item(item,icao=''):
+    raw=_notam_text(item);keyword=str(item.get('keyword') or item.get('featureName') or '').strip()
+    severity,category=_notam_risk(raw,keyword)
+    number=item.get('notamNumber') or item.get('number') or item.get('id') or ''
+    location=_clean_icao(item.get('facilityDesignator') or item.get('icaoId') or item.get('location') or item.get('icaoLocation') or icao) or str(icao or '').upper()
+    start=item.get('startDate') or item.get('startdateutc') or item.get('effectiveStartDate') or ''
+    end=item.get('endDate') or item.get('enddateutc') or item.get('effectiveEndDate') or ''
+    active=str(item.get('status') or 'Active').lower() not in ('cancelled','expired','inactive') and not bool(item.get('cancelledOrExpired'))
+    return {'number':str(number).upper(),'location':location,'class':keyword or 'NOTAM','category':category,'severity':severity,
+            'start':start,'end':end,'text':raw,'active':active,'source':'FAA NOTAM Search','raw_source':item.get('source') or 'USNS'}
+
+def _fetch_notams_many(icaos,ttl=OPS_NOTAM_TTL):
+    codes=list(dict.fromkeys(filter(None,(_clean_icao(x) for x in icaos))))
+    if not codes:return {'ok':True,'configured':True,'provider':'FAA NOTAM Search','stations':[],'count':0,'data':[],'by_station':{}}
+    # FAA accepts a comma-separated set; chunk to keep the public endpoint polite.
+    all_items=[];errors=[]
+    for off in range(0,len(codes),20):
+        chunk=codes[off:off+20];cache_key=('faa-notam',','.join(chunk));now=time.time();cached=_weather_cache.get(cache_key)
+        if cached and now-cached[0]<ttl:
+            payload=cached[1]
+        else:
+            stale=cached[1] if cached else None
+            try:
+                with httpx.Client(timeout=httpx.Timeout(9.0,connect=4.0),follow_redirects=True,headers={
+                    'Accept':'application/json,text/plain,*/*','Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','User-Agent':'SKYLINE-Airways/1.3.1'}) as client:
+                    r=client.post(FAA_NOTAM_URL,data={'searchType':'0','designatorsForLocation':','.join(chunk)});r.raise_for_status()
+                    payload=r.json()
+                _weather_cache[cache_key]=(now,payload)
+            except Exception as e:
+                errors.append(f'{type(e).__name__}:{str(e)[:80]}')
+                if isinstance(stale,dict):payload=stale
+                else:continue
+        rows=(payload.get('notamList') or payload.get('notams') or payload.get('data') or []) if isinstance(payload,dict) else []
+        all_items.extend(_normalize_notam_item(x) for x in rows if isinstance(x,dict))
+    dedup={}
+    for n in all_items:
+        if not n.get('active'):continue
+        key=(n.get('number'),n.get('location'),n.get('text'))
+        dedup[key]=n
+    items=list(dedup.values());by={c:[] for c in codes}
+    for n in items:
+        loc=n.get('location')
+        if loc in by:by[loc].append(n)
+        else:
+            # Multi-location FIR NOTAMs sometimes list several locations in field A;
+            # keep them visible to each requested code mentioned in the raw text.
+            upper=n.get('text','').upper()
+            for c in codes:
+                if c in upper:by[c].append(n)
+    ok=bool(items) or not errors
+    return {'ok':ok,'configured':True,'auth_required':False,'provider':'FAA NOTAM Search','stations':codes,'count':len(items),'data':items,'by_station':by,
+            'updated_at':datetime.now(timezone.utc).isoformat(),'cache_seconds':ttl,'warning':' / '.join(errors[-2:]) if errors else ''}
+
+def _fetch_notams(icao):
+    code=_clean_icao(icao)
+    if not code:raise HTTPException(400,'Code ICAO invalide')
+    out=_fetch_notams_many([code])
+    return {**out,'station':code,'data':out.get('by_station',{}).get(code,out.get('data',[])),'count':len(out.get('by_station',{}).get(code,out.get('data',[])))}
+
 @app.get('/api/aviation/notam/status')
 def api_notam_status(request:Request):
     with SessionLocal() as db:require_user(request,db)
-    return {'ok':False,'configured':False,'message':'NOTAM temps réel temporairement indisponibles.'}
+    return {'ok':True,'configured':True,'auth_required':False,'provider':'FAA NOTAM Search','scope':'route-relevant-airport-and-fir-notams','token_exposed':False,'cache_seconds':OPS_NOTAM_TTL}
+
+@app.get('/api/aviation/notams')
+def api_notams(request:Request,icao:str):
+    with SessionLocal() as db:require_user(request,db)
+    return _fetch_notams(icao)
+
+def _aviation_weather_many(product,icaos,ttl):
+    codes=list(dict.fromkeys(filter(None,(_clean_icao(x) for x in icaos))))
+    by={c:None for c in codes};errors=[]
+    for off in range(0,len(codes),40):
+        chunk=codes[off:off+40];key=('aviationweather-many',product,','.join(chunk));now=time.time();cached=_weather_cache.get(key);rows=None
+        if cached and now-cached[0]<ttl:rows=cached[1]
+        else:
+            stale=cached[1] if cached else None
+            for host in ('https://aviationweather.gov','https://connect.aviationweather.gov'):
+                try:
+                    with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.1'}) as client:
+                        r=client.get(f'{host}/api/data/{product}',params={'ids':','.join(chunk),'format':'json'})
+                        if r.status_code==204:rows=[]
+                        else:r.raise_for_status();rows=r.json()
+                    if isinstance(rows,list):break
+                except Exception as e:errors.append(f'{product}:{type(e).__name__}');rows=None
+            if not isinstance(rows,list):rows=stale if isinstance(stale,list) else []
+            if isinstance(rows,list):_weather_cache[key]=(now,rows)
+        for row in rows or []:
+            if not isinstance(row,dict):continue
+            code=_clean_icao(row.get('icaoId') or row.get('stationId') or row.get('id'))
+            if code in by:by[code]=row
+    return {'ok':not errors or any(by.values()),'by_station':by,'warning':' / '.join(errors[-2:]) if errors else ''}
+
+def _fetch_sigmet_geojson():
+    key=('aviationweather','sigmet-world-geojson');now=time.time();cached=_weather_cache.get(key)
+    if cached and now-cached[0]<OPS_SIGMET_TTL:return cached[1]
+    stale=cached[1] if cached else None;features=[];errors=[]
+    for product in ('isigmet','airsigmet'):
+        try:
+            with httpx.Client(timeout=httpx.Timeout(9.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/geo+json,application/json','User-Agent':'SKYLINE-Airways/1.3.1'}) as client:
+                r=client.get(f'https://aviationweather.gov/api/data/{product}',params={'format':'geojson'})
+                if r.status_code==204:continue
+                r.raise_for_status();data=r.json()
+            if isinstance(data,dict):
+                for f in data.get('features') or []:
+                    if isinstance(f,dict):features.append({**f,'properties':{**(f.get('properties') or {}),'_awc_product':product}})
+        except Exception as e:errors.append(f'{product}:{type(e).__name__}')
+    if not features and errors and isinstance(stale,dict) and stale.get('features'):
+        out={**stale,'stale':True,'warning':' / '.join(errors),'updated_at':stale.get('updated_at')}
+        return out
+    out={'ok':bool(features) or not errors,'provider':'AviationWeather.gov','count':len(features),'features':features,'warning':' / '.join(errors),'updated_at':datetime.now(timezone.utc).isoformat(),'stale':False}
+    _weather_cache[key]=(now,out);return out
+
+def _coords_bbox(coords):
+    xs=[];ys=[]
+    def walk(v):
+        if isinstance(v,(list,tuple)):
+            if len(v)>=2 and isinstance(v[0],(int,float)) and isinstance(v[1],(int,float)):
+                xs.append(float(v[0]));ys.append(float(v[1]))
+            else:
+                for z in v:walk(z)
+    walk(coords)
+    return (min(xs),min(ys),max(xs),max(ys)) if xs and ys else None
+
+def _route_samples(a,b,steps=36):
+    lat1,lon1=float(a['lat']),float(a['lon']);lat2,lon2=float(b['lat']),float(b['lon']);dlon=lon2-lon1
+    if dlon>180:dlon-=360
+    if dlon<-180:dlon+=360
+    out=[]
+    for i in range(steps+1):
+        t=i/steps;lat=lat1+(lat2-lat1)*t;lon=lon1+dlon*t
+        if lon>180:lon-=360
+        if lon<-180:lon+=360
+        out.append((lat,lon))
+    return out
+
+def _bbox_hits_samples(bbox,samples,pad=1.7):
+    if not bbox:return False
+    west,south,east,north=bbox
+    for lat,lon in samples:
+        # Most SIGMET polygons do not span the date line; support the common case
+        # and a shifted 0..360 comparison for Pacific routes.
+        if south-pad<=lat<=north+pad:
+            if west-pad<=lon<=east+pad:return True
+            lon360=lon if lon>=0 else lon+360;w360=west if west>=0 else west+360;e360=east if east>=0 else east+360
+            if e360<w360:e360+=360
+            if w360-pad<=lon360<=e360+pad:return True
+    return False
+
+def _sigmet_alert(feature,route_id,origin,destination):
+    props=feature.get('properties') or {};text=' '.join(str(props.get(k) or '') for k in ('rawSigmet','raw_text','raw','hazard','hazardType','qualifier','firName','seriesId')).strip()
+    up=text.upper();hazard=str(props.get('hazard') or props.get('hazardType') or props.get('phenomenon') or 'SIGMET').upper()
+    critical=any(k in up for k in ('TROPICAL CYCLONE','VOLCANIC ASH','SEV TURB','SEV ICE','SEVERE TURB','SEVERE ICING'))
+    sev='critical' if critical else 'important'
+    title=f'{hazard or "SIGMET"} sur le corridor {origin} → {destination}'
+    return {'kind':'sigmet','severity':sev,'category':'weather','title':title,'summary':text[:520] or 'SIGMET actif sur le corridor de la rotation.','source':'AviationWeather.gov','route_id':route_id,'origin':origin,'destination':destination,
+            'lat':((_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[1]+(_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[3])/2,
+            'lon':((_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[0]+(_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[2])/2,
+            'start':props.get('validTimeFrom') or props.get('issueTime') or props.get('validTime'), 'end':props.get('validTimeTo') or props.get('expireTime') or props.get('validTimeEnd')}
+
+def _airport_weather_alerts(icao,airport,route_ids=None,met=None,taf=None):
+    alerts=[];route_ids=route_ids or []
+    met=met or _aviation_weather_product('metar',icao,90);taf=taf or _aviation_weather_product('taf',icao,600)
+    if met.get('ok') and met.get('data'):
+        d=met['data'][0] if isinstance(met['data'][0],dict) else {};cat=str(d.get('fltCat') or '').upper();wx=str(d.get('wxString') or '');wind=float(d.get('wspd') or 0);gust=float(d.get('wgst') or 0)
+        sev=None;reasons=[]
+        if cat=='LIFR':sev='critical';reasons.append('conditions LIFR')
+        elif cat=='IFR':sev='important';reasons.append('conditions IFR')
+        if 'TS' in wx.upper():sev='critical' if sev=='critical' or gust>=35 else 'important';reasons.append('orage')
+        if gust>=40:sev='critical';reasons.append(f'rafales {gust:.0f} kt')
+        elif gust>=30 and sev!='critical':sev='important';reasons.append(f'rafales {gust:.0f} kt')
+        if sev:alerts.append({'kind':'metar','severity':sev,'category':'weather','title':f'{icao} · météo opérationnelle dégradée','summary':', '.join(reasons)+f'. METAR: {met.get("raw") or "disponible"}','source':'AviationWeather.gov','airport':icao,'airport_name':airport.get('name',''),'lat':airport.get('lat'),'lon':airport.get('lon'),'route_ids':route_ids})
+    if taf.get('ok'):
+        raw=str(taf.get('raw') or '').upper();haz=[]
+        for token,label in [('TS','orages prévus'),('FZRA','pluie verglaçante'),('+SN','fortes chutes de neige'),('SQ','grains')]:
+            if token in raw:haz.append(label)
+        if haz:alerts.append({'kind':'taf','severity':'important','category':'weather','title':f'{icao} · TAF à surveiller','summary':', '.join(haz)+'.','source':'AviationWeather.gov','airport':icao,'airport_name':airport.get('name',''),'lat':airport.get('lat'),'lon':airport.get('lon'),'route_ids':route_ids})
+    return alerts
+
+def _severity_rank(v):return {'critical':0,'important':1,'info':2}.get(v,3)
+
+def _ops_intelligence(db,u):
+    hubs=user_hubs(db,u);routes=db.scalars(select(Route).where(Route.user_id==u.id).order_by(Route.id)).all()
+    airports={};airport_routes={}
+    def add_airport(code,route_id=None,role='hub'):
+        a=airport_for_code(code)
+        if not a:return
+        icao=_clean_icao(a.get('ident'))
+        if not icao:return
+        airports[icao]=a;airport_routes.setdefault(icao,{'route_ids':set(),'roles':set()});airport_routes[icao]['roles'].add(role)
+        if route_id is not None:airport_routes[icao]['route_ids'].add(route_id)
+    for h in hubs:add_airport(h.airport_ident,None,'hub')
+    route_rows=[]
+    for r in routes:
+        o=airport_for_code(r.origin);d=airport_for_code(r.destination)
+        if not o or not d:continue
+        add_airport(r.origin,r.id,'departure');add_airport(r.destination,r.id,'arrival')
+        if r.commercial_destination:add_airport(r.commercial_destination,r.id,'arrival')
+        if r.via:add_airport(r.via,r.id,'via')
+        route_rows.append((r,o,d,_route_samples(o,d)))
+    # Query only hubs + airports that are actually used by the player's network.
+    # Upstream products run concurrently so a slow public service does not serialize
+    # the whole OPS screen. METAR/TAF are batched to stay comfortably below AWC limits.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_notam=pool.submit(_fetch_notams_many,list(airports.keys()))
+        f_met=pool.submit(_aviation_weather_many,'metar',list(airports.keys()),90)
+        f_taf=pool.submit(_aviation_weather_many,'taf',list(airports.keys()),600)
+        f_sig=pool.submit(_fetch_sigmet_geojson)
+        f_watch=pool.submit(_fetch_notams_many,OPS_WATCH_FIRS) if OPS_WATCH_FIRS else None
+        notam=f_notam.result();met_batch=f_met.result();taf_batch=f_taf.result();sig=f_sig.result();watch=f_watch.result() if f_watch else {'by_station':{}}
+    alerts=[]
+    for icao,a in airports.items():
+        meta=airport_routes.get(icao,{});route_ids=sorted(meta.get('route_ids') or [])
+        for n in notam.get('by_station',{}).get(icao,[]):
+            if n.get('severity')=='info':continue
+            sev=n.get('severity','important');role=' / '.join(sorted(meta.get('roles') or []))
+            alerts.append({'kind':'notam','severity':sev,'category':n.get('category'),'title':f'{icao} · {n.get("number") or "NOTAM"}','summary':n.get('text','')[:650],
+                           'source':'FAA NOTAM Search','airport':icao,'airport_name':a.get('name',''),'airport_role':role,'lat':a.get('lat'),'lon':a.get('lon'),'route_ids':route_ids,'start':n.get('start'),'end':n.get('end')})
+        # local weather warnings are useful only for airports the company actually operates.
+        met_row=met_batch.get('by_station',{}).get(icao);taf_row=taf_batch.get('by_station',{}).get(icao)
+        met_obj={'ok':bool(met_row),'data':[met_row] if met_row else [],'raw':(met_row or {}).get('rawOb')}
+        taf_obj={'ok':bool(taf_row),'data':[taf_row] if taf_row else [],'raw':(taf_row or {}).get('rawTAF')}
+        alerts.extend(_airport_weather_alerts(icao,a,route_ids,met_obj,taf_obj))
+    # Worldwide SIGMETs are filtered against the player's route corridors, never dumped globally.
+    for r,o,d,samples in route_rows:
+        for f in sig.get('features') or []:
+            geom=f.get('geometry') or {};bbox=_coords_bbox(geom.get('coordinates'))
+            if _bbox_hits_samples(bbox,samples):alerts.append(_sigmet_alert(f,r.id,o.get('code') or r.origin,d.get('code') or r.destination))
+    # High-priority FIR watch: query live NOTAMs, but surface them only when a player's route
+    # passes through the region envelope.  No conflict state is invented or hard-coded.
+    for region in OPS_WATCH_REGIONS.values():
+        affected_routes=[]
+        west,south,east,north=region['bbox']
+        for r,o,d,samples in route_rows:
+            if _bbox_hits_samples((west,south,east,north),samples,pad=.4):affected_routes.append((r,o,d))
+        if not affected_routes:continue
+        seen=set()
+        live=[]
+        for fir in region['firs']:
+            for n in watch.get('by_station',{}).get(fir,[]):
+                if n.get('severity') not in ('critical','important') or n.get('category')!='airspace':continue
+                k=(n.get('number'),n.get('text'))
+                if k in seen:continue
+                seen.add(k);live.append(n)
+        for n in live:
+            for r,o,d in affected_routes:
+                alerts.append({'kind':'airspace','severity':'critical' if n.get('severity')=='critical' else 'important','category':'airspace',
+                               'title':f'Restriction d’espace aérien · {o.get("code") or r.origin} → {d.get("code") or r.destination}',
+                               'summary':n.get('text','')[:700],'source':'FAA NOTAM Search','route_id':r.id,'origin':o.get('code') or r.origin,'destination':d.get('code') or r.destination,'lat':(float(o.get('lat'))+float(d.get('lat')))/2,'lon':(float(o.get('lon'))+float(d.get('lon')))/2,'start':n.get('start'),'end':n.get('end')})
+    # De-duplicate while preserving the most operationally severe version.
+    uniq={}
+    for a in alerts:
+        key=(a.get('kind'),a.get('title'),a.get('summary','')[:180],a.get('route_id'),a.get('airport'))
+        if key not in uniq or _severity_rank(a.get('severity'))<_severity_rank(uniq[key].get('severity')):uniq[key]=a
+    alerts=sorted(uniq.values(),key=lambda x:(_severity_rank(x.get('severity')),0 if x.get('category')=='airspace' else 1,x.get('airport') or '',x.get('route_id') or 0))
+    crit=sum(1 for x in alerts if x.get('severity')=='critical');imp=sum(1 for x in alerts if x.get('severity')=='important')
+    return {'ok':True,'mode':'relevant-only','provider_notam':'FAA NOTAM Search','provider_weather':'AviationWeather.gov','auth_required':False,
+            'monitored_airports':[{'icao':k,'code':v.get('code'),'name':v.get('name'),'roles':sorted(airport_routes[k]['roles'])} for k,v in airports.items()],
+            'monitored_routes':len(route_rows),'watch_firs':OPS_WATCH_FIRS,'alerts':alerts[:120],
+            'summary':{'critical':crit,'important':imp,'total':len(alerts),'airport_notams':sum(1 for x in alerts if x.get('kind')=='notam'),'weather':sum(1 for x in alerts if x.get('category')=='weather'),'airspace':sum(1 for x in alerts if x.get('category')=='airspace')},
+            'updated_at':datetime.now(timezone.utc).isoformat()}
+
+@app.get('/api/ops/intelligence')
+def api_ops_intelligence(request:Request):
+    with SessionLocal() as db:
+        u=require_user(request,db)
+        return _ops_intelligence(db,u)
 
 @app.get('/api/integrations/fr24/status')
 def api_fr24_status(request:Request):
     with SessionLocal() as db:require_user(request,db)
     configured=bool(_fr24_token())
     return {'configured':configured,'provider':'Flightradar24 API' if configured else 'OpenSky fallback','api_version':'v1','secret_location':'server environment','token_exposed':False,
-            'world_mode':'tiled-full','world_cache_seconds':FR24_WORLD_CACHE_SECONDS,'world_tile_limit':FR24_WORLD_TILE_LIMIT,'sandbox_likely':'sandbox' in FR24_BASE_URL.lower()}
+            'world_mode':'viewport-adaptive','world_cache_seconds':30,'world_tile_limit':60,'sandbox_likely':'sandbox' in FR24_BASE_URL.lower()}
+
+@app.get('/api/integrations/fr24/world-summary')
+def api_fr24_world_summary(request:Request):
+    with SessionLocal() as db:require_user(request,db)
+    if not _fr24_token():return {'ok':False,'configured':False,'provider':'Flightradar24','tracked_count':0,'reason':'FR24_API_TOKEN absent'}
+    return {'ok':True,'configured':True,'provider':'Flightradar24','scope':'viewport-adaptive','tracked_count':0,'tracked_count_available':False,'loaded_count':0,'airborne_count':0,'ground_count':0,'coverage_pct':None,'subscription_limited':False,'memory_safe':True,'message':"API FR24 configurée. Le globe charge uniquement les positions de la zone visible; aucun compteur planétaire n'est interrogé."}
 
 @app.get('/api/integrations/fr24/test')
 def api_fr24_test(request:Request,ident:str='CDG'):
@@ -1595,7 +2360,7 @@ def api_fr24_test(request:Request,ident:str='CDG'):
         states,mode=_fetch_fr24(bounds,25,a);ground=sum(1 for x in states if x.get('on_ground'))
         return {'ok':True,'configured':True,'provider':'Flightradar24','mode':mode,'airport':a['code'],'scope':'diagnostic_local','bounds':bounds,
                 'count':len(states),'ground_count':ground,'airborne_count':len(states)-ground,
-                'message':'Test local autour du hub uniquement. Le Globe utilise un balayage mondial séparé.'}
+                'message':'Test local autour du hub uniquement. Le Globe charge ensuite FR24 par zone visible.'}
     except httpx.HTTPStatusError as e:
         return {'ok':False,'configured':True,'provider':'Flightradar24','status_code':e.response.status_code,'reason':'Clé refusée, crédit/plan insuffisant, ou endpoint non autorisé.'}
     except Exception as e:return {'ok':False,'configured':True,'provider':'Flightradar24','reason':type(e).__name__}
@@ -1606,6 +2371,16 @@ def api_fr24_airline(code:str,request:Request):
     code=''.join(ch for ch in code.upper().strip() if ch.isalnum())[:4]
     if len(code)<2:raise HTTPException(400,'Code compagnie invalide')
     if code in COMMON_AIRLINES:return {'ok':True,'airline':{'icao':code,'name':COMMON_AIRLINES[code],'source':'skyline-seed'}}
+    # The bundled catalog contains ~2k active airlines. Resolve locally first so
+    # major and regional operators still have the correct identity without
+    # spending an FR24 static-data request.
+    try:
+        local=[x for x in search_airlines(code,8) if str(x.get('icao') or '').upper()==code]
+        if local:
+            row=local[0]
+            return {'ok':True,'airline':{'icao':code,'iata':row.get('iata') or '','name':row.get('name') or code,'country':row.get('country') or '','source':'skyline-catalog'}}
+    except Exception:
+        pass
     now=time.time();cached=_fr24_airline_cache.get(code)
     if cached and now-cached[0]<86400:return cached[1]
     if not _fr24_token():return {'ok':False,'airline':{'icao':code,'name':code,'source':'code'}}
@@ -1615,24 +2390,163 @@ def api_fr24_airline(code:str,request:Request):
     except Exception:out={'ok':False,'airline':{'icao':code,'name':code,'source':'code'}}
     _fr24_airline_cache[code]=(now,out);return out
 
+def _fr24_flight_detail(fr24_id):
+    fid=''.join(ch for ch in str(fr24_id or '') if ch.isalnum())[:32]
+    if not fid or not _fr24_token():return None
+    now=time.time();cached=_fr24_detail_cache.get(fid)
+    if cached and now-cached[0]<90:return cached[1]
+    try:
+        with httpx.Client(timeout=httpx.Timeout(7.0,connect=3.5),headers=_fr24_headers(),follow_redirects=True) as client:
+            r=client.get(f'{FR24_BASE_URL}/flight-summary/full',params={'flight_ids':fid,'limit':1});r.raise_for_status();rows=(r.json().get('data') or [])
+        x=rows[0] if rows else None
+        if not x:return None
+        out={'fr24_id':x.get('fr24_id') or fid,'flight':x.get('flight') or '','callsign':x.get('callsign') or '','type':x.get('type') or '','reg':x.get('reg') or '','hex':x.get('hex') or '',
+             'painted_as':str(x.get('painted_as') or '').upper(),'operating_as':str(x.get('operated_as') or x.get('operating_as') or '').upper(),
+             'origin':x.get('orig_iata') or x.get('origin_icao') or x.get('orig_icao') or '','origin_icao':x.get('origin_icao') or x.get('orig_icao') or '',
+             'destination':x.get('dest_iata') or x.get('destination_icao') or x.get('dest_icao') or '','destination_icao':x.get('destination_icao') or x.get('dest_icao') or '',
+             'destination_actual':x.get('dest_iata_actual') or x.get('destination_icao_actual') or x.get('dest_icao_actual') or '',
+             'datetime_takeoff':x.get('datetime_takeoff'),'datetime_landed':x.get('datetime_landed'),'runway_takeoff':x.get('runway_takeoff'),'runway_landed':x.get('runway_landed'),
+             'flight_time':x.get('flight_time'),'actual_distance':x.get('actual_distance'),'circle_distance':x.get('circle_distance'),'category':x.get('category'),'flight_ended':x.get('flight_ended'),'first_seen':x.get('first_seen'),'last_seen':x.get('last_seen')}
+        _fr24_detail_cache[fid]=(now,out);return out
+    except Exception:return None
+
+def _fr24_live_detail_fallback(fr24_id='',lat=None,lon=None,reg='',hexcode='',callsign=''):
+    """Targeted live lookup used only after a player clicks an aircraft.
+
+    Flight-summary can legitimately have no row for a freshly tracked ground movement.
+    In that case we query a tiny live-position box around the clicked coordinate and
+    match the same FR24 id / registration / hex / callsign. This keeps the global
+    stream light while restoring useful detail for aircraft on stands and taxiways.
+    """
+    if not _fr24_token() or lat is None or lon is None:return None
+    try:
+        lat=float(lat);lon=float(lon)
+    except (TypeError,ValueError):return None
+    fid=''.join(ch for ch in str(fr24_id or '') if ch.isalnum()).lower()
+    regkey=''.join(ch for ch in str(reg or '').upper() if ch.isalnum() or ch=='-')
+    hexkey=''.join(ch for ch in str(hexcode or '').upper() if ch.isalnum())
+    callkey=''.join(ch for ch in str(callsign or '').upper() if ch.isalnum())
+    span=.09;bounds=f'{min(89.9,lat+span)},{max(-89.9,lat-span)},{max(-179.99,lon-span)},{min(179.99,lon+span)}'
+    try:
+        rows,mode=_fetch_fr24(bounds,90,None,modes=('full','light'))
+    except Exception:
+        return None
+    def score(x):
+        points=0
+        if fid and str(x.get('fr24_id') or '').lower()==fid:points+=100
+        if regkey and str(x.get('reg') or '').upper()==regkey:points+=60
+        if hexkey and str(x.get('hex') or '').upper()==hexkey:points+=50
+        if callkey and ''.join(ch for ch in str(x.get('callsign') or '').upper() if ch.isalnum())==callkey:points+=35
+        try:points+=max(0,20-int(haversine_km(lat,lon,float(x.get('lat')),float(x.get('lon')))*20))
+        except Exception:pass
+        return points
+    if not rows:return None
+    best=max(rows,key=score)
+    if score(best)<20:return None
+    return {**best,'detail_source':f'live-{mode}'}
+
+@app.get('/api/live-aircraft/detail')
+def api_live_aircraft_detail(request:Request,fr24_id:str='',lat:Optional[float]=None,lon:Optional[float]=None,reg:str='',hex:str='',callsign:str=''):
+    with SessionLocal() as db:require_user(request,db)
+    detail=_fr24_flight_detail(fr24_id) if fr24_id else None
+    live=_fr24_live_detail_fallback(fr24_id,lat,lon,reg,hex,callsign)
+    if detail and live: detail={**live,**detail,'lat':live.get('lat'),'lon':live.get('lon'),'altitude_ft':live.get('altitude_ft'),'velocity_kts':live.get('velocity_kts'),'heading':live.get('heading'),'on_ground':live.get('on_ground'),'phase':live.get('phase')}
+    elif not detail: detail=live
+    return {'ok':bool(detail),'provider':'Flightradar24 API','detail':detail,'message':'Fiche détaillée chargée uniquement au clic, y compris pour le trafic au sol.' if detail else 'FR24 ne fournit pas de détail supplémentaire pour cette position.'}
+
 def _planespotters_lookup(kind,value):
     value=''.join(ch for ch in str(value or '').upper() if ch.isalnum() or ch=='-')
     if not value:return None
     try:
-        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.2'}) as client:
+        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
             r=client.get(f'https://api.planespotters.net/pub/photos/{kind}/{value}');r.raise_for_status();d=r.json()
         photos=d.get('photos') or []
         if not photos:return None
         p=photos[0];return {'thumbnail':(p.get('thumbnail') or {}).get('src'),'large':(p.get('large') or {}).get('src'),'photographer':p.get('photographer') or '', 'source_url':p.get('link') or '', 'source':'Planespotters.net'}
     except Exception:return None
 
+def _commons_registration_photo(registration):
+    """Registration-exact fallback for live aircraft photos.
+
+    Only accept Commons results whose title or metadata contains the exact
+    registration. This is intentionally strict: a missing photo is preferable to
+    an airport/terminal image or a different aircraft.
+    """
+    reg=''.join(ch for ch in str(registration or '').upper() if ch.isalnum() or ch=='-')
+    if len(reg)<3:return None
+    try:
+        params={'action':'query','generator':'search','gsrsearch':f'"{reg}" aircraft','gsrnamespace':6,'gsrlimit':8,
+                'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':900,'format':'json','origin':'*'}
+        with httpx.Client(timeout=httpx.Timeout(7.0,connect=3.5),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
+            r=client.get('https://commons.wikimedia.org/w/api.php',params=params);r.raise_for_status();body=r.json()
+        pages=list(((body.get('query') or {}).get('pages') or {}).values())
+        needle=reg.replace('-','')
+        for page in pages:
+            title=str(page.get('title') or '');info=(page.get('imageinfo') or [{}])[0];meta=info.get('extmetadata') or {}
+            hay=' '.join([title,str((meta.get('ImageDescription') or {}).get('value') or ''),str((meta.get('ObjectName') or {}).get('value') or '')]).upper().replace('-','')
+            if needle not in hay:continue
+            low=title.lower()
+            if any(x in low for x in ('airport map','terminal','logo','diagram','drawing','cockpit','interior')):continue
+            url=info.get('thumburl') or info.get('url')
+            if not url:continue
+            return {'thumbnail':url,'large':url,'photographer':re.sub('<[^>]+>','',str((meta.get('Artist') or {}).get('value') or ''))[:120],
+                    'source_url':info.get('descriptionurl') or '', 'source':'Wikimedia Commons · immatriculation exacte',
+                    'license':str((meta.get('LicenseShortName') or {}).get('value') or '')}
+    except Exception:
+        return None
+    return None
+
 @app.get('/api/live-aircraft/photo')
 def api_live_aircraft_photo(request:Request,reg:str='',hex:str=''):
     with SessionLocal() as db:require_user(request,db)
     regkey=''.join(ch for ch in reg.upper() if ch.isalnum() or ch=='-');hexkey=''.join(ch for ch in hex.upper() if ch.isalnum());key=('aircraft-photo',regkey,hexkey);now=time.time();cached=_aircraft_photo_cache.get(key)
     if cached and now-cached[0]<(86400 if cached[1].get('found') else 21600):return cached[1]
-    photo=_planespotters_lookup('reg',regkey) or _planespotters_lookup('hex',hexkey);out={'ok':True,'found':bool(photo),'photo':photo}
+    photo=_planespotters_lookup('reg',regkey) or _planespotters_lookup('hex',hexkey) or _commons_registration_photo(regkey);out={'ok':True,'found':bool(photo),'photo':photo}
     _aircraft_photo_cache[key]=(now,out);return out
+
+def _commons_aircraft_photo(search_text):
+    """Find a model/type illustration on Wikimedia Commons for catalog cards.
+    Results are cached and filtered to avoid logos, drawings, interiors and obvious mismatches.
+    """
+    query=' '.join(str(search_text or '').split())[:120]
+    if not query:return None
+    key=query.lower();now=time.time();cached=_aircraft_type_photo_cache.get(key)
+    if cached and now-cached[0]<(86400*7 if cached[1] else 21600):return cached[1]
+    try:
+        params={'action':'query','generator':'search','gsrsearch':f'{query} aircraft','gsrnamespace':6,'gsrlimit':12,
+                'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':900,'format':'json','origin':'*'}
+        with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:
+            r=client.get('https://commons.wikimedia.org/w/api.php',params=params);r.raise_for_status();body=r.json()
+        pages=list(((body.get('query') or {}).get('pages') or {}).values())
+        tokens=[x.lower() for x in re.findall(r'[A-Za-z0-9]+',query) if len(x)>=3]
+        bad=('logo','diagram','drawing','cockpit','interior','seat map','cutaway','model kit','rc ')
+        best=None
+        for page in pages:
+            title=str(page.get('title') or '');low=title.lower()
+            if any(x in low for x in bad):continue
+            info=(page.get('imageinfo') or [{}])[0];url=info.get('thumburl') or info.get('url')
+            if not url or not any(low.endswith(ext) for ext in ('.jpg','.jpeg','.png','.webp','.tif','.tiff')):continue
+            score=sum(1 for t in tokens if t in low)
+            if score<=0:continue
+            meta=info.get('extmetadata') or {}
+            item={'url':url,'page_url':info.get('descriptionurl') or f"https://commons.wikimedia.org/wiki/{title.replace(' ','_')}",
+                  'title':title.removeprefix('File:'),'artist':str((meta.get('Artist') or {}).get('value') or ''),
+                  'license':str((meta.get('LicenseShortName') or {}).get('value') or ''),'source':'Wikimedia Commons','match_score':score}
+            if best is None or item['match_score']>best['match_score']:best=item
+        _aircraft_type_photo_cache[key]=(now,best);return best
+    except Exception:
+        _aircraft_type_photo_cache[key]=(now,None);return None
+
+@app.get('/api/aircraft/type-photo')
+def api_aircraft_type_photo(request:Request,icao:str='',name:str='',manufacturer:str=''):
+    with SessionLocal() as db:require_user(request,db)
+    spec=aircraft_detail(icao) if icao else None
+    if spec and spec.get('image'):
+        return {'ok':True,'found':True,'photo':{'url':spec['image'],'page_url':'','title':spec.get('name',''),'artist':'','license':'SKYLINE curated','source':'SKYLINE','match_score':99}}
+    query=' '.join(x for x in (manufacturer or (spec or {}).get('manufacturer',''),name or (spec or {}).get('name',''),icao) if x)
+    photo=_commons_aircraft_photo(query)
+    if not photo and icao:photo=_commons_aircraft_photo(f'{icao} {name or ""}')
+    return {'ok':True,'found':bool(photo),'photo':photo,'query':query}
 
 @app.get('/api/live-traffic')
 def api_live_traffic(ident:str):
@@ -1644,7 +2558,7 @@ def api_live_traffic(ident:str):
     span=.18 if a['type']=='large_airport' else .13 if a['type']=='medium_airport' else .10;fr24_error=None
     if _fr24_token():
         try:
-            bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}";states,fr24_mode=_fetch_fr24(bounds,500,a);ground=sum(1 for x in states if x.get('on_ground'))
+            bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}";states,fr24_mode=_fetch_fr24(bounds,80,a,modes=('light',));ground=sum(1 for x in states if x.get('on_ground'))
             out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'ground_count':ground,'airborne_count':len(states)-ground,'nearby_count':len(states),'real_only':True,'fr24_mode':fr24_mode};_traffic_cache[key]=(now,out);return out
         except httpx.HTTPStatusError as e:fr24_error=f'HTTP {e.response.status_code}'
         except Exception as e:fr24_error=type(e).__name__
@@ -1659,25 +2573,23 @@ def api_live_traffic(ident:str):
 @app.get('/api/live-traffic/world')
 def api_live_traffic_world(request:Request):
     with SessionLocal() as db:require_user(request,db)
-    if not _fr24_token():return {'source':'unavailable','states':[],'configured':False,'real_only':True,'total_count':0,'airborne_count':0,'ground_count':0,'reason':'FR24 non configuré'}
-    try:return _fr24_world_snapshot()
-    except Exception as e:return JSONResponse({'source':'unavailable','states':[],'configured':True,'real_only':True,'total_count':0,'airborne_count':0,'ground_count':0,'reason':type(e).__name__},status_code=503)
+    return {'source':'Flightradar24 API' if _fr24_token() else 'unavailable','states':[],'configured':bool(_fr24_token()),'real_only':True,'scope':'world-aggregated','total_count':0,'tracked_count':0,'tracked_count_available':False,'airborne_count':0,'ground_count':0,'memory_safe':True,'message':'Vue mondiale agrégée. Zoome pour charger les positions FR24 de la zone visible.'}
 
 @app.get('/api/live-traffic/box')
-def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=5000):
-    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(20,min(20000,limit))
+def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=40):
+    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(10,min(60,limit))
     bucket=(round(lamin,1),round(lomin,1),round(lamax,1),round(lomax,1),limit,'fr24' if _fr24_token() else 'opensky');now=time.time();cached=_traffic_cache.get(('box',)+bucket)
     if cached and now-cached[0]<30:return cached[1]
     fr24_error=None
     if _fr24_token():
         try:
-            bounds=f'{lamax},{lamin},{lomin},{lomax}';states,fr24_mode=_fetch_fr24(bounds,limit);ground=sum(1 for x in states if x.get('on_ground'))
-            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':fr24_mode,'scope':'viewport','total_count':len(states),'airborne_count':len(states)-ground,'ground_count':ground};_traffic_cache[('box',)+bucket]=(now,out);return out
+            bounds=f'{lamax},{lamin},{lomin},{lomax}';states,fr24_mode=_fetch_fr24(bounds,limit,modes=('light',));ground=sum(1 for x in states if x.get('on_ground'))
+            out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':fr24_mode,'scope':'viewport','total_count':len(states),'airborne_count':len(states)-ground,'ground_count':ground,'position_limit':limit,'response_limited':len(states)>=limit};_traffic_cache[('box',)+bucket]=(now,out);return out
         except httpx.HTTPStatusError as e:fr24_error=f'HTTP {e.response.status_code}'
         except Exception as e:fr24_error=type(e).__name__
     try:
         params={'lamin':lamin,'lomin':lomin,'lamax':lamax,'lomax':lomax}
-        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.2'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
+        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.6'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
         states=[]
         for x in raw[:limit]:
             if len(x)<11 or x[5] is None or x[6] is None:continue
@@ -1691,50 +2603,45 @@ def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:i
 
 
 SPECIAL_BRANCHES={
-    'sar':{'label':'Secours héliporté / SAR','min_level':61,'base_cost':18_000_000,'icon':'🚁',
+    'sar':{'label':'Secours héliporté / SAR','min_level':22,'base_cost':18_000_000,'icon':'🚁',
            'desc':'Medevac, secours montagne et maritime, missions automatiques H24.'},
-    'fire':{'label':'Sécurité civile / incendies','min_level':66,'base_cost':28_000_000,'icon':'🛩️',
+    'fire':{'label':'Sécurité civile / incendies','min_level':32,'base_cost':28_000_000,'icon':'🛩️',
             'desc':'Bases bombardiers d’eau, remplissage, maintenance et contrats saisonniers.'},
-    'gendarmerie':{'label':'Gendarmerie / service public','min_level':71,'base_cost':24_000_000,'icon':'🚁',
+    'gendarmerie':{'label':'Gendarmerie / service public','min_level':30,'base_cost':24_000_000,'icon':'🚁',
                    'desc':'Couverture territoriale, disponibilité H24 et interventions automatisées.'},
-    'government':{'label':'Contrats gouvernementaux','min_level':76,'base_cost':38_000_000,'icon':'🏛️',
+    'government':{'label':'Contrats gouvernementaux','min_level':38,'base_cost':38_000_000,'icon':'🏛️',
                   'desc':'Transport d’État, logistique et missions internationales.'},
-    'defense':{'label':'Défense du territoire','min_level':81,'base_cost':75_000_000,'icon':'🛡️',
+    'defense':{'label':'Défense du territoire','min_level':35,'base_cost':75_000_000,'icon':'🛡️',
                'desc':'Gestion stratégique de transport, surveillance, ravitaillement et disponibilité. Aucun combat pilotable.'},
 }
 SPECIAL_CONTRACT_TEMPLATES=[
-    {'code':'pt_fire_summer','branch':'fire','title':'Soutien incendies – Portugal','country':'Portugal','reward':5_850_000,'days':14,'min_level':66,'aircraft':['CL2T'],'required_count':2},
-    {'code':'fr_sar_h24','branch':'sar','title':'Couverture secours H24','country':'France','reward':3_200_000,'days':10,'min_level':61,'aircraft':['EC45','A139'],'required_count':2},
-    {'code':'med_sar','branch':'sar','title':'Surveillance & secours maritime','country':'Méditerranée','reward':4_100_000,'days':12,'min_level':63,'aircraft':['EC45','A139'],'required_count':1},
-    {'code':'public_h24','branch':'gendarmerie','title':'Disponibilité service public H24','country':'France','reward':4_800_000,'days':14,'min_level':71,'aircraft':['EC45','NH90'],'required_count':2},
-    {'code':'gov_airlift','branch':'government','title':'Pont aérien gouvernemental','country':'International','reward':8_500_000,'days':14,'min_level':76,'aircraft':['A400','C30J'],'required_count':2},
-    {'code':'territory_readiness','branch':'defense','title':'Disponibilité stratégique territoriale','country':'Europe','reward':12_000_000,'days':14,'min_level':81,'aircraft':['A400','C30J','RFAL','MQ9'],'required_count':3},
+    {'code':'pt_fire_summer','branch':'fire','title':'Soutien incendies – Portugal','country':'Portugal','reward':5_850_000,'days':14,'min_level':32,'aircraft':['CL2T'],'required_count':2},
+    {'code':'fr_sar_h24','branch':'sar','title':'Couverture secours H24','country':'France','reward':3_200_000,'days':10,'min_level':22,'aircraft':['EC45','A139'],'required_count':2},
+    {'code':'med_sar','branch':'sar','title':'Surveillance & secours maritime','country':'Méditerranée','reward':4_100_000,'days':12,'min_level':25,'aircraft':['EC45','A139'],'required_count':1},
+    {'code':'public_h24','branch':'gendarmerie','title':'Disponibilité service public H24','country':'France','reward':4_800_000,'days':14,'min_level':30,'aircraft':['EC45','NH90'],'required_count':2},
+    {'code':'gov_airlift','branch':'government','title':'Pont aérien gouvernemental','country':'International','reward':8_500_000,'days':14,'min_level':38,'aircraft':['A400','C30J'],'required_count':2},
+    {'code':'territory_readiness','branch':'defense','title':'Disponibilité stratégique territoriale','country':'Europe','reward':12_000_000,'days':14,'min_level':35,'aircraft':['A400','C30J','RFAL','MQ9'],'required_count':3},
 ]
 
 @app.get('/api/special-ops')
-def api_special_ops(request:Request):
+def api_special_ops(request:Request,country:str='FR'):
     with SessionLocal() as db:
-        u=require_user(request,db);pr=career_progress(db,u)
-        bases=db.scalars(select(SpecialBase).where(SpecialBase.user_id==u.id).order_by(SpecialBase.id)).all()
-        contracts=db.scalars(select(SpecialContract).where(SpecialContract.user_id==u.id).order_by(SpecialContract.id.desc())).all()
-        base_out=[{'id':b.id,'airport_ident':b.airport_ident,'branch':b.branch,'name':b.name,'level':b.level,'purchase_price':b.purchase_price} for b in bases]
-        owned_by_branch={b.branch for b in bases}
-        items=[]
+        u=require_user(request,db);pr=career_progress(db,u);country=(country or 'FR').strip().upper()[:2]
+        bases=db.scalars(select(SpecialBase).where(SpecialBase.user_id==u.id).order_by(SpecialBase.id)).all();contracts=db.scalars(select(SpecialContract).where(SpecialContract.user_id==u.id).order_by(SpecialContract.id.desc())).all()
+        base_out=[]
+        for b in bases:
+            a=airport_detail(b.airport_ident) or {};base_out.append({'id':b.id,'airport_ident':b.airport_ident,'branch':b.branch,'name':b.name,'level':b.level,'purchase_price':b.purchase_price,'airport':{'ident':a.get('ident',b.airport_ident),'code':a.get('code',b.airport_ident),'name':a.get('name',b.airport_ident),'country':a.get('country',''),'lat':a.get('lat'),'lon':a.get('lon'),'municipality':a.get('municipality','')}})
+        owned_by_branch={b.branch for b in bases};items=[]
         for code,meta in SPECIAL_BRANCHES.items():
-            m=dict(meta);m['code']=code;m['unlocked']=pr['level']>=meta['min_level'];m['owned']=code in owned_by_branch
-            m['reason']='Disponible' if m['unlocked'] else f"Niveau {meta['min_level']} requis (actuel {pr['level']})"
-            items.append(m)
-        fleet_types=[x for (x,) in db.execute(select(Aircraft.type_icao).where(Aircraft.user_id==u.id)).all()]
-        ct=[]
+            m=dict(meta);m['code']=code;m['unlocked']=pr['level']>=meta['min_level'];m['owned']=code in owned_by_branch;m['base_count']=sum(1 for b in bases if b.branch==code);m['reason']='Disponible' if m['unlocked'] else f"Niveau {meta['min_level']} requis (actuel {pr['level']})";items.append(m)
+        candidates=[]
+        for a in special_base_airports(country,60):
+            detail=airport_detail(a['ident']) or a;site_fee=int(round(float(detail.get('price') or 0)*.12/50_000)*50_000);candidates.append({**a,'site_fee':site_fee,'owned_branches':[b.branch for b in bases if b.airport_ident==a['ident']]})
+        fleet_types=[x for (x,) in db.execute(select(Aircraft.type_icao).where(Aircraft.user_id==u.id)).all()];ct=[]
         for t in SPECIAL_CONTRACT_TEMPLATES:
-            row=dict(t);row['unlocked']=pr['level']>=t['min_level'];row['has_base']=t['branch'] in owned_by_branch
-            row['compatible_aircraft_count']=sum(1 for code in fleet_types if code in t['aircraft'])
-            row['fleet_ready']=row['compatible_aircraft_count']>=t.get('required_count',1)
-            row['active']=any(c.contract_code==t['code'] and c.status=='active' for c in contracts)
-            ct.append(row)
-        active=[{'id':c.id,'title':c.title,'country':c.country,'branch':c.branch,'reward':c.reward,'status':c.status,
-                 'ends_at':c.ends_at.isoformat() if c.ends_at else None} for c in contracts[:20]]
-        return {'level':pr['level'],'branches':items,'bases':base_out,'contracts':ct,'active_contracts':active}
+            row=dict(t);row['unlocked']=pr['level']>=t['min_level'];row['has_base']=t['branch'] in owned_by_branch;row['compatible_aircraft_count']=sum(1 for code in fleet_types if code in t['aircraft']);row['fleet_ready']=row['compatible_aircraft_count']>=t.get('required_count',1);row['active']=any(c.contract_code==t['code'] and c.status=='active' for c in contracts);ct.append(row)
+        active=[{'id':c.id,'title':c.title,'country':c.country,'branch':c.branch,'reward':c.reward,'status':c.status,'ends_at':c.ends_at.isoformat() if c.ends_at else None} for c in contracts[:20]]
+        return {'level':pr['level'],'branches':items,'bases':base_out,'contracts':ct,'active_contracts':active,'selected_country':country,'countries':airport_countries(3),'country_airports':candidates,'base_policy':'Bases spécialisées indépendantes des hubs commerciaux.'}
 
 @app.post('/api/special-ops/base')
 def api_special_base(req:SpecialBaseReq,request:Request):
@@ -1742,15 +2649,14 @@ def api_special_base(req:SpecialBaseReq,request:Request):
         u=require_user(request,db);pr=career_progress(db,u);meta=SPECIAL_BRANCHES.get(req.branch)
         if not meta:raise HTTPException(404,'Branche spécialisée inconnue')
         if pr['level']<meta['min_level']:raise HTTPException(400,f"Niveau {meta['min_level']} requis")
-        h=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==req.airport_ident))
-        if not h:raise HTTPException(400,'Cette base doit être construite sur un hub possédé.')
-        existing=db.scalar(select(SpecialBase).where(SpecialBase.user_id==u.id,SpecialBase.airport_ident==req.airport_ident,SpecialBase.branch==req.branch))
+        a=airport_detail(req.airport_ident)
+        if not a or not a.get('scheduled') or a.get('type') not in ('large_airport','medium_airport','small_airport'):raise HTTPException(400,'Choisis un aéroport exploitable affiché sur la carte du pays.')
+        existing=db.scalar(select(SpecialBase).where(SpecialBase.user_id==u.id,SpecialBase.airport_ident==a['ident'],SpecialBase.branch==req.branch))
         if existing:return {'ok':True,'base_id':existing.id,'already_owned':True}
-        cost=meta['base_cost']
+        site_fee=int(round(float(a.get('price') or 0)*.12/50_000)*50_000);cost=int(meta['base_cost']+site_fee)
         if u.cash<cost:raise HTTPException(400,'Trésorerie insuffisante')
-        u.cash-=cost;b=SpecialBase(user_id=u.id,airport_ident=req.airport_ident,branch=req.branch,name=f"{meta['label']} · {req.airport_ident}",purchase_price=cost)
-        db.add(b);log_tx(db,u.id,'special_base',f"Base spécialisée · {meta['label']}",-cost);db.commit();db.refresh(b)
-        return {'ok':True,'base_id':b.id,'cash':u.cash}
+        u.cash-=cost;b=SpecialBase(user_id=u.id,airport_ident=a['ident'],branch=req.branch,name=f"{meta['label']} · {a['code']}",purchase_price=cost);db.add(b);log_tx(db,u.id,'special_base',f"Base {meta['label']} · {a['code']} ({a.get('country','')})",-cost);db.commit();db.refresh(b)
+        return {'ok':True,'base_id':b.id,'cash':u.cash,'price':cost,'airport':{'ident':a['ident'],'code':a['code'],'name':a['name'],'country':a['country'],'lat':a['lat'],'lon':a['lon']}}
 
 @app.post('/api/special-ops/contract')
 def api_special_contract(req:SpecialContractReq,request:Request):
@@ -1788,61 +2694,22 @@ def _fallback_surface_network(a):
 
 @app.get('/api/hub/{ident}/surface-network')
 def api_surface_network(ident:str,request:Request):
-    """Aeroway geometry from OSM/Overpass when available, with runway fallback."""
+    """Memory-safe local airport plan.
+
+    v1.3.5 intentionally no longer calls Overpass/OSM for a full airport surface
+    network. Large hubs such as CDG can produce very large JSON responses and were
+    the main source of 512 MB Render crashes. The client builds a stylised airport
+    model from the authoritative runway geometry + SKYLINE zone coordinates.
+    """
     with SessionLocal() as db:
         u=require_user(request,db)
         h=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==ident))
         if not h:raise HTTPException(403,'Hub non possédé')
     a=airport_detail(ident)
     if not a:raise HTTPException(404,'Aéroport introuvable')
-    now=time.time();cached=_surface_cache.get(a['ident'])
-    if cached and now-cached[0] < 6*3600:return cached[1]
-    span={'large_airport':.050,'medium_airport':.040,'small_airport':.026,'heliport':.018}.get(a['type'],.03)
-    south,west,north,east=a['lat']-span,a['lon']-span,a['lat']+span,a['lon']+span
-    q=(
-        '[out:json][timeout:8];('
-        f'way["aeroway"="taxiway"]({south},{west},{north},{east});'
-        f'way["aeroway"="runway"]({south},{west},{north},{east});'
-        f'way["aeroway"="apron"]({south},{west},{north},{east});'
-        f'way["aeroway"="terminal"]({south},{west},{north},{east});'
-        f'node["aeroway"="gate"]({south},{west},{north},{east});'
-        f'node["aeroway"="parking_position"]({south},{west},{north},{east});'
-        ');out body;>;out skel qt;'
-    )
-    out=None
-    try:
-        with httpx.Client(timeout=10,headers={'User-Agent':'SKYLINE-Airways-Realism/0.6'}) as client:
-            r=client.post('https://overpass-api.de/api/interpreter',data={'data':q})
-            r.raise_for_status();raw=r.json()
-        nodes={e['id']:(e.get('lon'),e.get('lat')) for e in raw.get('elements',[]) if e.get('type')=='node' and e.get('lon') is not None and e.get('lat') is not None}
-        features=[]
-        for e in raw.get('elements',[]):
-            if e.get('type')=='way':
-                tags=e.get('tags') or {};kind=tags.get('aeroway')
-                coords=[nodes.get(nid) for nid in e.get('nodes',[])]
-                coords=[list(c) for c in coords if c and c[0] is not None]
-                if len(coords)<2:continue
-                if kind in ('apron','terminal') and len(coords)>=3:
-                    ring=coords + ([coords[0]] if coords[-1]!=coords[0] else [])
-                    geom={'type':'Polygon','coordinates':[ring]}
-                else:
-                    geom={'type':'LineString','coordinates':coords}
-                features.append({'type':'Feature','geometry':geom,'properties':{'kind':kind or 'aeroway','name':tags.get('ref') or tags.get('name') or '', 'surface':tags.get('surface') or '', 'source':'OpenStreetMap','asset_key':f'{kind or "aeroway"}:{e.get("id")}' }})
-            elif e.get('type')=='node':
-                tags=e.get('tags') or {};kind=tags.get('aeroway')
-                if kind in ('gate','parking_position') and e.get('lon') is not None:
-                    features.append({'type':'Feature','geometry':{'type':'Point','coordinates':[e['lon'],e['lat']]},'properties':{'kind':kind,'name':tags.get('ref') or tags.get('name') or '', 'source':'OpenStreetMap','asset_key':f'{kind}:{e.get("id")}' }})
-        # Large airports can contain tens of thousands of OSM objects. Keep only
-        # the operational geometry needed by the game to avoid OOM on 512 MB instances.
-        if features:
-            priority={'runway':0,'terminal':1,'taxiway':2,'gate':3,'parking_position':4,'apron':5}
-            features.sort(key=lambda f: priority.get((f.get('properties') or {}).get('kind'),9))
-            features=features[:1400]
-            out={'type':'FeatureCollection','features':features,'source':'OpenStreetMap / Overpass'}
-    except Exception:
-        out=None
-    if not out:out=_fallback_surface_network(a)
-    _surface_cache[a['ident']]=(now,out)
+    out=_fallback_surface_network(a)
+    out['source']='SKYLINE model · OurAirports runways'
+    out['memory_safe']=True
     return out
 
 @app.post('/api/reset-career')
@@ -1855,7 +2722,7 @@ def api_reset(request:Request):
             db.execute(delete(FlightRecord).where(FlightRecord.route_id.in_(route_ids)));db.execute(delete(RouteProgress).where(RouteProgress.route_id.in_(route_ids)));db.execute(delete(RouteSettings).where(RouteSettings.route_id.in_(route_ids)))
         if aircraft_ids:
             db.execute(delete(AircraftService).where(AircraftService.aircraft_id.in_(aircraft_ids)));db.execute(delete(AircraftLiveryDetail).where(AircraftLiveryDetail.aircraft_id.in_(aircraft_ids)))
-        db.execute(delete(SpecialContract).where(SpecialContract.user_id==u.id));db.execute(delete(SpecialBase).where(SpecialBase.user_id==u.id));db.execute(delete(AllianceBenefitLog).where(AllianceBenefitLog.user_id==u.id));db.execute(delete(CompanyResearch).where(CompanyResearch.user_id==u.id));db.execute(delete(ShopEntitlement).where(ShopEntitlement.user_id==u.id));db.execute(delete(AirlineAllianceMembership).where(AirlineAllianceMembership.user_id==u.id));db.execute(delete(HRPolicy).where(HRPolicy.user_id==u.id));db.execute(delete(IPOState).where(IPOState.user_id==u.id));db.execute(delete(GameWallet).where(GameWallet.user_id==u.id));db.execute(delete(Route).where(Route.user_id==u.id));db.execute(delete(Aircraft).where(Aircraft.user_id==u.id));db.execute(delete(HubAsset).where(HubAsset.user_id==u.id));db.execute(delete(HubUpgrade).where(HubUpgrade.user_id==u.id));db.execute(delete(HotelProperty).where(HotelProperty.user_id==u.id));db.execute(delete(Partner).where(Partner.user_id==u.id));db.execute(delete(MarketingCampaign).where(MarketingCampaign.user_id==u.id));db.execute(delete(Employee).where(Employee.user_id==u.id));db.execute(delete(Loan).where(Loan.user_id==u.id));db.execute(delete(FinanceTransaction).where(FinanceTransaction.user_id==u.id));db.execute(delete(UserHub).where(UserHub.user_id==u.id))
+        db.execute(delete(SpecialContract).where(SpecialContract.user_id==u.id));db.execute(delete(SpecialBase).where(SpecialBase.user_id==u.id));db.execute(delete(AllianceBenefitLog).where(AllianceBenefitLog.user_id==u.id));db.execute(delete(CompanyResearch).where(CompanyResearch.user_id==u.id));db.execute(delete(ShopEntitlement).where(ShopEntitlement.user_id==u.id));db.execute(delete(AirlineAllianceMembership).where(AirlineAllianceMembership.user_id==u.id));db.execute(delete(HRPolicy).where(HRPolicy.user_id==u.id));db.execute(delete(IPOState).where(IPOState.user_id==u.id));db.execute(delete(GameWallet).where(GameWallet.user_id==u.id));db.execute(delete(Route).where(Route.user_id==u.id));db.execute(delete(Aircraft).where(Aircraft.user_id==u.id));db.execute(delete(HubAsset).where(HubAsset.user_id==u.id));db.execute(delete(HubConstruction).where(HubConstruction.user_id==u.id));db.execute(delete(HubUpgrade).where(HubUpgrade.user_id==u.id));db.execute(delete(HotelProperty).where(HotelProperty.user_id==u.id));db.execute(delete(Partner).where(Partner.user_id==u.id));db.execute(delete(MarketingCampaign).where(MarketingCampaign.user_id==u.id));db.execute(delete(Employee).where(Employee.user_id==u.id));db.execute(delete(Loan).where(Loan.user_id==u.id));db.execute(delete(FinanceTransaction).where(FinanceTransaction.user_id==u.id));db.execute(delete(UserHub).where(UserHub.user_id==u.id))
         u.cash=180_000_000;u.reputation=50;u.hub_code='';u.last_settled=now_utc();db.commit();return {'ok':True}
 
 # ============================================================================
@@ -1876,6 +2743,11 @@ class AllianceChatReq(BaseModel):
     message:str
 class AllianceGoalClaimReq(BaseModel):
     goal_code:str
+class AllianceUpgradeReq(BaseModel):
+    code:str
+class AllianceMemberRoleReq(BaseModel):
+    user_id:int
+    role:str
 
 SHOP_ITEMS=[
     {'code':'livery_airfrance','type':'livery','title':'Air France · livrée officielle (prototype privé)','subtitle':'Habillage Air France pour le studio de livrée','token_price':650,'cash_price':0,'image':'/static/liveries/airfrance-a350.jpg','premium':True},
@@ -1978,11 +2850,14 @@ def player_alliance_payload(db,u):
     for m in reversed(msgs):
         mu=db.get(User,m.user_id);chat.append({'id':m.id,'username':mu.username if mu else 'Membre','message':m.message,'created_at':m.created_at.isoformat() if m.created_at else ''})
     network=_alliance_network_payload(db,a,u.id);goals=_alliance_goals_payload(db,a,network);level=player_alliance_level(a.xp)
+    upgrades,upgrade_bonuses=alliance_upgrade_state(db,a.id,level['level'])
     monthly_savings=db.scalar(select(func.sum(AllianceBenefitLog.saved_amount)).where(AllianceBenefitLog.alliance_id==a.id,AllianceBenefitLog.created_at>=since)) or 0
     activity=[]
     for log in db.scalars(select(AllianceBenefitLog).where(AllianceBenefitLog.alliance_id==a.id).order_by(AllianceBenefitLog.created_at.desc()).limit(12)).all():
         mu=db.get(User,log.user_id);activity.append({'kind':'saving','user':mu.username if mu else 'Membre','label':log.label or log.category,'amount':round(log.saved_amount,2),'created_at':log.created_at.isoformat() if log.created_at else ''})
-    return {'id':a.id,'name':a.name,'tag':a.tag,'role':member.role,'treasury':a.treasury,'xp':a.xp,'level':level['level'],'xp_floor':level['xp'],'xp_next':level['next_xp'],'maxed':level['maxed'],'active_bonuses':level.get('bonuses',{}),'members':members,'chat':chat,'member_count':len(members),'monthly_savings':round(float(monthly_savings),2),'network':network,'goals':goals,'activity':activity}
+    combined=dict(level.get('bonuses',{}))
+    for k,v in upgrade_bonuses.items():combined[k]=round(combined.get(k,0)+v,2)
+    return {'id':a.id,'name':a.name,'tag':a.tag,'role':member.role,'can_manage':member.role in ('founder','officer'),'treasury':a.treasury,'xp':a.xp,'level':level['level'],'xp_floor':level['xp'],'xp_next':level['next_xp'],'maxed':level['maxed'],'level_bonuses':level.get('bonuses',{}),'upgrade_bonuses':upgrade_bonuses,'active_bonuses':combined,'upgrades':upgrades,'members':members,'chat':chat,'member_count':len(members),'monthly_savings':round(float(monthly_savings),2),'network':network,'goals':goals,'activity':activity}
 
 @app.get('/api/alliances')
 def api_alliances(request:Request):
@@ -2044,7 +2919,7 @@ def api_player_alliance_leave(request:Request):
         if m.role=='founder':
             count=db.scalar(select(func.count()).select_from(PlayerAllianceMember).where(PlayerAllianceMember.alliance_id==a.id)) or 0
             if count>1:raise HTTPException(400,'Le fondateur doit rester tant que d’autres membres sont présents')
-            db.execute(delete(AllianceMessage).where(AllianceMessage.alliance_id==a.id));db.execute(delete(AllianceGoalClaim).where(AllianceGoalClaim.alliance_id==a.id));db.execute(delete(AllianceBenefitLog).where(AllianceBenefitLog.alliance_id==a.id));db.delete(m);db.delete(a)
+            db.execute(delete(AllianceMessage).where(AllianceMessage.alliance_id==a.id));db.execute(delete(AllianceGoalClaim).where(AllianceGoalClaim.alliance_id==a.id));db.execute(delete(AllianceBenefitLog).where(AllianceBenefitLog.alliance_id==a.id));db.execute(delete(AllianceUpgrade).where(AllianceUpgrade.alliance_id==a.id));db.delete(m);db.delete(a)
         else:db.delete(m)
         db.commit();return {'ok':True}
 
@@ -2057,6 +2932,41 @@ def api_player_alliance_contribute(req:PlayerAllianceContributionReq,request:Req
         if not m:raise HTTPException(400,'Aucune alliance')
         if u.cash<amount:raise HTTPException(400,'Fonds insuffisants')
         a=db.get(PlayerAlliance,m.alliance_id);u.cash-=amount;m.contribution+=amount;a.treasury+=amount;a.xp+=int(amount/5000);log_tx(db,u.id,'alliance',f'Contribution alliance {a.name}',-amount);db.commit();return {'ok':True,'treasury':a.treasury,'xp':a.xp}
+
+@app.post('/api/alliances/upgrades/buy')
+def api_alliance_upgrade_buy(req:AllianceUpgradeReq,request:Request):
+    code=req.code.strip().lower();cfg=ALLIANCE_UPGRADES.get(code)
+    if not cfg:raise HTTPException(404,'Amélioration d’alliance inconnue')
+    with SessionLocal() as db:
+        u=require_user(request,db);m=db.scalar(select(PlayerAllianceMember).where(PlayerAllianceMember.user_id==u.id))
+        if not m:raise HTTPException(400,'Aucune alliance de joueurs')
+        if m.role not in ('founder','officer'):raise HTTPException(403,'Seuls le fondateur et les officiers peuvent investir la trésorerie')
+        a=db.get(PlayerAlliance,m.alliance_id);lvl=player_alliance_level(a.xp)
+        if lvl['level']<cfg['min_alliance_level']:raise HTTPException(400,f"Niveau d’alliance {cfg['min_alliance_level']} requis")
+        row=db.scalar(select(AllianceUpgrade).where(AllianceUpgrade.alliance_id==a.id,AllianceUpgrade.code==code))
+        current=int(row.level if row else 0)
+        if current>=cfg['max_level']:raise HTTPException(400,'Amélioration déjà au niveau maximum')
+        cost=float(cfg['costs'][current])
+        if a.treasury<cost:raise HTTPException(400,f'Trésorerie alliance insuffisante · {cost:,.0f} € requis')
+        a.treasury-=cost;a.xp+=max(25,int(cost/25000))
+        if row:
+            row.level=current+1;row.invested=float(row.invested or 0)+cost;row.updated_by_user_id=u.id;row.updated_at=now_utc()
+        else:
+            db.add(AllianceUpgrade(alliance_id=a.id,code=code,level=1,invested=cost,updated_by_user_id=u.id))
+        db.add(AllianceBenefitLog(user_id=u.id,alliance_id=a.id,source='alliance_upgrade',category='investment',base_amount=cost,final_amount=cost,saved_amount=0,label=f"Amélioration alliance · {cfg['name']} niv. {current+1}"))
+        db.commit();return {'ok':True,'code':code,'level':current+1,'treasury':a.treasury,'xp':a.xp}
+
+@app.post('/api/alliances/member/role')
+def api_alliance_member_role(req:AllianceMemberRoleReq,request:Request):
+    role=req.role.strip().lower()
+    if role not in ('member','officer'):raise HTTPException(400,'Rôle invalide')
+    with SessionLocal() as db:
+        u=require_user(request,db);me=db.scalar(select(PlayerAllianceMember).where(PlayerAllianceMember.user_id==u.id))
+        if not me or me.role!='founder':raise HTTPException(403,'Seul le fondateur peut gérer les officiers')
+        target=db.scalar(select(PlayerAllianceMember).where(PlayerAllianceMember.alliance_id==me.alliance_id,PlayerAllianceMember.user_id==req.user_id))
+        if not target:raise HTTPException(404,'Membre introuvable')
+        if target.role=='founder':raise HTTPException(400,'Le rôle du fondateur ne peut pas être modifié')
+        target.role=role;db.commit();return {'ok':True,'user_id':target.user_id,'role':role}
 
 @app.post('/api/alliances/goals/claim')
 def api_alliance_goal_claim(req:AllianceGoalClaimReq,request:Request):
