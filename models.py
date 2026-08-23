@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Integer, Float, DateTime, ForeignKey, Text, Boolean, UniqueConstraint
 
@@ -240,3 +240,30 @@ class BankLoanV6(Base):
     term_months: Mapped[int]=mapped_column(Integer)
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
     last_accrued_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+
+class SpecialBase(Base):
+    __tablename__='special_bases_v8'
+    __table_args__=(UniqueConstraint('user_id','airport_ident','branch',name='uq_v8_special_base'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    airport_ident: Mapped[str]=mapped_column(String(16),index=True)
+    branch: Mapped[str]=mapped_column(String(48),index=True)
+    name: Mapped[str]=mapped_column(String(120),default='')
+    level: Mapped[int]=mapped_column(Integer,default=1)
+    purchase_price: Mapped[float]=mapped_column(Float,default=0)
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class SpecialContract(Base):
+    __tablename__='special_contracts_v8'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    base_id: Mapped[int]=mapped_column(ForeignKey('special_bases_v8.id'),index=True)
+    contract_code: Mapped[str]=mapped_column(String(80),index=True)
+    branch: Mapped[str]=mapped_column(String(48),index=True)
+    title: Mapped[str]=mapped_column(String(180))
+    country: Mapped[str]=mapped_column(String(80),default='')
+    reward: Mapped[float]=mapped_column(Float,default=0)
+    status: Mapped[str]=mapped_column(String(24),default='active')
+    starts_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    ends_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc)+timedelta(days=14))
