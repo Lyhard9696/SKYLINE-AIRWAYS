@@ -1,4 +1,4 @@
-import os, math, json, base64, hashlib, hmac, secrets, time, random, threading, re
+import os, math, json, base64, hashlib, hmac, secrets, time, random, threading, re, html
 from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -39,7 +39,7 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.0')
+app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.1')
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware('http')
@@ -753,7 +753,7 @@ def daily_quests(db,u):
 
 # -------- Page routes --------
 @app.get('/health')
-def health():return {'status':'ok','version':'1.3.0','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
+def health():return {'status':'ok','version':'1.3.1','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
 
 @app.get('/')
 def root(request:Request):
@@ -1739,51 +1739,319 @@ def api_aviation_taf(request:Request,icao:str):
     with SessionLocal() as db:require_user(request,db)
     return _aviation_weather_product('taf',icao,600)
 
-def _notam_key():
-    for key in ('AVIATION_EDGE_API_KEY','NOTAM_API_KEY'):
-        value=os.getenv(key,'').strip()
-        if value:return value
-    return ''
+FAA_NOTAM_URL='https://notams.aim.faa.gov/notamSearch/search'
+OPS_NOTAM_TTL=max(120,int(os.getenv('OPS_NOTAM_CACHE_SECONDS','600')))
+OPS_SIGMET_TTL=max(60,int(os.getenv('OPS_SIGMET_CACHE_SECONDS','180')))
 
+# Live FIR watch is intentionally small and route-relevant.  The default set is
+# Ukraine because its FIR restrictions are long-running and operationally major.
+# Extra FIR codes can be added without a code change through OPS_WATCH_FIRS.
+_DEFAULT_WATCH_FIRS=['UKBV','UKDV','UKFV','UKLV','UKOV']
+OPS_WATCH_FIRS=list(dict.fromkeys(_DEFAULT_WATCH_FIRS+[x.strip().upper() for x in os.getenv('OPS_WATCH_FIRS','').split(',') if x.strip()]))
+OPS_WATCH_REGIONS={
+    # broad envelope only used to decide whether a PLAYER route is near the live
+    # FIR watch.  The actual restriction text/severity always comes from live NOTAMs.
+    'ukraine':{'name':'FIR ukrainiennes','firs':set(_DEFAULT_WATCH_FIRS),'bbox':(22.0,43.5,41.5,53.5)},
+}
 
-def _normalize_notam_item(item,icao):
-    raw=str(item.get('condition') or item.get('text') or item.get('notamText') or '').strip()
-    start=item.get('startdateutc') or item.get('effectiveStartDate') or item.get('startDate') or ''
-    end=item.get('enddateutc') or item.get('effectiveEndDate') or item.get('endDate') or ''
-    number=item.get('number') or item.get('notamNumber') or item.get('id') or ''
-    return {'number':str(number).upper(),'location':str(item.get('location') or item.get('icaoLocation') or icao).upper(),'class':item.get('class') or item.get('classification') or 'international','start':start,'end':end,'text':raw,'active':True}
+def _clean_icao(value):
+    code=''.join(ch for ch in str(value or '').upper() if ch.isalnum())[:4]
+    return code if len(code)==4 else ''
 
+def _notam_text(item):
+    value=item.get('icaoMessage') or item.get('traditionalMessageFrom4thWord') or item.get('plainLanguageMessage') or item.get('condition') or item.get('text') or item.get('notamText') or ''
+    return re.sub(r'\s+',' ',html.unescape(str(value))).strip()
+
+def _notam_risk(text,keyword=''):
+    t=f'{keyword} {text}'.upper()
+    critical=(
+        r'\bAD\s+CLSD\b',r'\bAERODROME\s+CLOSED\b',r'\bAIRPORT\s+CLOSED\b',
+        r'\bRWY\s+[0-9A-Z/\-]+\s+CLSD\b',r'\bRUNWAY\b.{0,35}\bCLOSED\b',
+        r'\bAIRSPACE\b.{0,80}\bPROHIBITED\b',r'\bAIRSPACE\b.{0,80}\bCLOSED\b',
+        r'\bATS\s+IS\s+NOT\s+PROVIDED\b',r'\bNO\s+FLIGHTS?\b',r'\bPROHIBITED\s+FOR\s+ALL\s+AIRCRAFT\b',
+    )
+    important=(
+        r'\bILS\b.{0,45}\b(U/S|UNSERVICEABLE|INOP)\b',r'\bTWY\b.{0,35}\bCLSD\b',
+        r'\bWIP\b',r'\bWORK\s+IN\s+PROGRESS\b',r'\bCRANE\b',r'\bOBST\b',
+        r'\bLIGHT(?:ING|S)?\b.{0,35}\b(U/S|INOP|UNSERVICEABLE)\b',r'\bMILITARY\b',
+        r'\bDANGER\b',r'\bRESTRICTED\b',r'\bTFR\b',r'\bGPS\b.{0,40}\bUNRELIABLE\b',
+    )
+    severity='critical' if any(re.search(p,t) for p in critical) else ('important' if any(re.search(p,t) for p in important) else 'info')
+    if any(k in t for k in ('AIRSPACE','FIR ','UIR ','MILITARY','PROHIBITED','RESTRICTED','TFR')):category='airspace'
+    elif any(k in t for k in ('RWY','RUNWAY')):category='runway'
+    elif any(k in t for k in ('TWY','TAXIWAY')):category='taxiway'
+    elif any(k in t for k in ('ILS','VOR','NDB','DME','GNSS','GPS')):category='navigation'
+    elif any(k in t for k in ('OBST','CRANE','LIGHT')):category='infrastructure'
+    else:category='operations'
+    return severity,category
+
+def _normalize_notam_item(item,icao=''):
+    raw=_notam_text(item);keyword=str(item.get('keyword') or item.get('featureName') or '').strip()
+    severity,category=_notam_risk(raw,keyword)
+    number=item.get('notamNumber') or item.get('number') or item.get('id') or ''
+    location=_clean_icao(item.get('facilityDesignator') or item.get('icaoId') or item.get('location') or item.get('icaoLocation') or icao) or str(icao or '').upper()
+    start=item.get('startDate') or item.get('startdateutc') or item.get('effectiveStartDate') or ''
+    end=item.get('endDate') or item.get('enddateutc') or item.get('effectiveEndDate') or ''
+    active=str(item.get('status') or 'Active').lower() not in ('cancelled','expired','inactive') and not bool(item.get('cancelledOrExpired'))
+    return {'number':str(number).upper(),'location':location,'class':keyword or 'NOTAM','category':category,'severity':severity,
+            'start':start,'end':end,'text':raw,'active':active,'source':'FAA NOTAM Search','raw_source':item.get('source') or 'USNS'}
+
+def _fetch_notams_many(icaos,ttl=OPS_NOTAM_TTL):
+    codes=list(dict.fromkeys(filter(None,(_clean_icao(x) for x in icaos))))
+    if not codes:return {'ok':True,'configured':True,'provider':'FAA NOTAM Search','stations':[],'count':0,'data':[],'by_station':{}}
+    # FAA accepts a comma-separated set; chunk to keep the public endpoint polite.
+    all_items=[];errors=[]
+    for off in range(0,len(codes),20):
+        chunk=codes[off:off+20];cache_key=('faa-notam',','.join(chunk));now=time.time();cached=_weather_cache.get(cache_key)
+        if cached and now-cached[0]<ttl:
+            payload=cached[1]
+        else:
+            stale=cached[1] if cached else None
+            try:
+                with httpx.Client(timeout=httpx.Timeout(9.0,connect=4.0),follow_redirects=True,headers={
+                    'Accept':'application/json,text/plain,*/*','Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','User-Agent':'SKYLINE-Airways/1.3.1'}) as client:
+                    r=client.post(FAA_NOTAM_URL,data={'searchType':'0','designatorsForLocation':','.join(chunk)});r.raise_for_status()
+                    payload=r.json()
+                _weather_cache[cache_key]=(now,payload)
+            except Exception as e:
+                errors.append(f'{type(e).__name__}:{str(e)[:80]}')
+                if isinstance(stale,dict):payload=stale
+                else:continue
+        rows=(payload.get('notamList') or payload.get('notams') or payload.get('data') or []) if isinstance(payload,dict) else []
+        all_items.extend(_normalize_notam_item(x) for x in rows if isinstance(x,dict))
+    dedup={}
+    for n in all_items:
+        if not n.get('active'):continue
+        key=(n.get('number'),n.get('location'),n.get('text'))
+        dedup[key]=n
+    items=list(dedup.values());by={c:[] for c in codes}
+    for n in items:
+        loc=n.get('location')
+        if loc in by:by[loc].append(n)
+        else:
+            # Multi-location FIR NOTAMs sometimes list several locations in field A;
+            # keep them visible to each requested code mentioned in the raw text.
+            upper=n.get('text','').upper()
+            for c in codes:
+                if c in upper:by[c].append(n)
+    ok=bool(items) or not errors
+    return {'ok':ok,'configured':True,'auth_required':False,'provider':'FAA NOTAM Search','stations':codes,'count':len(items),'data':items,'by_station':by,
+            'updated_at':datetime.now(timezone.utc).isoformat(),'cache_seconds':ttl,'warning':' / '.join(errors[-2:]) if errors else ''}
 
 def _fetch_notams(icao):
-    code=''.join(ch for ch in str(icao or '').upper() if ch.isalnum())[:4]
-    if len(code)!=4:raise HTTPException(400,'Code ICAO invalide')
-    key=('notam-live',code);now=time.time();cached=_weather_cache.get(key)
-    if cached and now-cached[0]<300:return cached[1]
-    api_key=_notam_key()
-    if not api_key:
-        out={'ok':False,'configured':False,'provider':'Aviation Edge NOTAM','station':code,'data':[],'message':'Ajoute AVIATION_EDGE_API_KEY dans Render pour activer les NOTAM mondiaux en temps réel.'}
-        _weather_cache[key]=(now,out);return out
-    try:
-        with httpx.Client(timeout=httpx.Timeout(10.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3'}) as client:
-            r=client.get('https://aviation-edge.com/v2/public/notams',params={'key':api_key,'icao':code});r.raise_for_status();data=r.json()
-        if isinstance(data,dict) and data.get('error'):
-            raise RuntimeError(str(data.get('error'))[:120])
-        rows=data if isinstance(data,list) else (data.get('data') or data.get('notams') or []) if isinstance(data,dict) else []
-        items=[_normalize_notam_item(x,code) for x in rows if isinstance(x,dict)]
-        out={'ok':True,'configured':True,'provider':'Aviation Edge NOTAM','station':code,'count':len(items),'data':items,'updated_at':datetime.now(timezone.utc).isoformat()}
-    except Exception as e:
-        out={'ok':False,'configured':True,'provider':'Aviation Edge NOTAM','station':code,'data':[],'message':'Fournisseur NOTAM temporairement indisponible','reason':type(e).__name__}
-    _weather_cache[key]=(now,out);return out
+    code=_clean_icao(icao)
+    if not code:raise HTTPException(400,'Code ICAO invalide')
+    out=_fetch_notams_many([code])
+    return {**out,'station':code,'data':out.get('by_station',{}).get(code,out.get('data',[])),'count':len(out.get('by_station',{}).get(code,out.get('data',[])))}
 
 @app.get('/api/aviation/notam/status')
 def api_notam_status(request:Request):
     with SessionLocal() as db:require_user(request,db)
-    return {'ok':True,'configured':bool(_notam_key()),'provider':'Aviation Edge NOTAM','scope':'worldwide-airport-notams','secret_location':'server environment','token_exposed':False}
+    return {'ok':True,'configured':True,'auth_required':False,'provider':'FAA NOTAM Search','scope':'route-relevant-airport-and-fir-notams','token_exposed':False,'cache_seconds':OPS_NOTAM_TTL}
 
 @app.get('/api/aviation/notams')
 def api_notams(request:Request,icao:str):
     with SessionLocal() as db:require_user(request,db)
     return _fetch_notams(icao)
+
+def _aviation_weather_many(product,icaos,ttl):
+    codes=list(dict.fromkeys(filter(None,(_clean_icao(x) for x in icaos))))
+    by={c:None for c in codes};errors=[]
+    for off in range(0,len(codes),40):
+        chunk=codes[off:off+40];key=('aviationweather-many',product,','.join(chunk));now=time.time();cached=_weather_cache.get(key);rows=None
+        if cached and now-cached[0]<ttl:rows=cached[1]
+        else:
+            stale=cached[1] if cached else None
+            for host in ('https://aviationweather.gov','https://connect.aviationweather.gov'):
+                try:
+                    with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.1'}) as client:
+                        r=client.get(f'{host}/api/data/{product}',params={'ids':','.join(chunk),'format':'json'})
+                        if r.status_code==204:rows=[]
+                        else:r.raise_for_status();rows=r.json()
+                    if isinstance(rows,list):break
+                except Exception as e:errors.append(f'{product}:{type(e).__name__}');rows=None
+            if not isinstance(rows,list):rows=stale if isinstance(stale,list) else []
+            if isinstance(rows,list):_weather_cache[key]=(now,rows)
+        for row in rows or []:
+            if not isinstance(row,dict):continue
+            code=_clean_icao(row.get('icaoId') or row.get('stationId') or row.get('id'))
+            if code in by:by[code]=row
+    return {'ok':not errors or any(by.values()),'by_station':by,'warning':' / '.join(errors[-2:]) if errors else ''}
+
+def _fetch_sigmet_geojson():
+    key=('aviationweather','sigmet-world-geojson');now=time.time();cached=_weather_cache.get(key)
+    if cached and now-cached[0]<OPS_SIGMET_TTL:return cached[1]
+    stale=cached[1] if cached else None;features=[];errors=[]
+    for product in ('isigmet','airsigmet'):
+        try:
+            with httpx.Client(timeout=httpx.Timeout(9.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/geo+json,application/json','User-Agent':'SKYLINE-Airways/1.3.1'}) as client:
+                r=client.get(f'https://aviationweather.gov/api/data/{product}',params={'format':'geojson'})
+                if r.status_code==204:continue
+                r.raise_for_status();data=r.json()
+            if isinstance(data,dict):
+                for f in data.get('features') or []:
+                    if isinstance(f,dict):features.append({**f,'properties':{**(f.get('properties') or {}),'_awc_product':product}})
+        except Exception as e:errors.append(f'{product}:{type(e).__name__}')
+    if not features and errors and isinstance(stale,dict) and stale.get('features'):
+        out={**stale,'stale':True,'warning':' / '.join(errors),'updated_at':stale.get('updated_at')}
+        return out
+    out={'ok':bool(features) or not errors,'provider':'AviationWeather.gov','count':len(features),'features':features,'warning':' / '.join(errors),'updated_at':datetime.now(timezone.utc).isoformat(),'stale':False}
+    _weather_cache[key]=(now,out);return out
+
+def _coords_bbox(coords):
+    xs=[];ys=[]
+    def walk(v):
+        if isinstance(v,(list,tuple)):
+            if len(v)>=2 and isinstance(v[0],(int,float)) and isinstance(v[1],(int,float)):
+                xs.append(float(v[0]));ys.append(float(v[1]))
+            else:
+                for z in v:walk(z)
+    walk(coords)
+    return (min(xs),min(ys),max(xs),max(ys)) if xs and ys else None
+
+def _route_samples(a,b,steps=36):
+    lat1,lon1=float(a['lat']),float(a['lon']);lat2,lon2=float(b['lat']),float(b['lon']);dlon=lon2-lon1
+    if dlon>180:dlon-=360
+    if dlon<-180:dlon+=360
+    out=[]
+    for i in range(steps+1):
+        t=i/steps;lat=lat1+(lat2-lat1)*t;lon=lon1+dlon*t
+        if lon>180:lon-=360
+        if lon<-180:lon+=360
+        out.append((lat,lon))
+    return out
+
+def _bbox_hits_samples(bbox,samples,pad=1.7):
+    if not bbox:return False
+    west,south,east,north=bbox
+    for lat,lon in samples:
+        # Most SIGMET polygons do not span the date line; support the common case
+        # and a shifted 0..360 comparison for Pacific routes.
+        if south-pad<=lat<=north+pad:
+            if west-pad<=lon<=east+pad:return True
+            lon360=lon if lon>=0 else lon+360;w360=west if west>=0 else west+360;e360=east if east>=0 else east+360
+            if e360<w360:e360+=360
+            if w360-pad<=lon360<=e360+pad:return True
+    return False
+
+def _sigmet_alert(feature,route_id,origin,destination):
+    props=feature.get('properties') or {};text=' '.join(str(props.get(k) or '') for k in ('rawSigmet','raw_text','raw','hazard','hazardType','qualifier','firName','seriesId')).strip()
+    up=text.upper();hazard=str(props.get('hazard') or props.get('hazardType') or props.get('phenomenon') or 'SIGMET').upper()
+    critical=any(k in up for k in ('TROPICAL CYCLONE','VOLCANIC ASH','SEV TURB','SEV ICE','SEVERE TURB','SEVERE ICING'))
+    sev='critical' if critical else 'important'
+    title=f'{hazard or "SIGMET"} sur le corridor {origin} → {destination}'
+    return {'kind':'sigmet','severity':sev,'category':'weather','title':title,'summary':text[:520] or 'SIGMET actif sur le corridor de la rotation.','source':'AviationWeather.gov','route_id':route_id,'origin':origin,'destination':destination,
+            'lat':((_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[1]+(_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[3])/2,
+            'lon':((_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[0]+(_coords_bbox((feature.get('geometry') or {}).get('coordinates')) or (0,0,0,0))[2])/2,
+            'start':props.get('validTimeFrom') or props.get('issueTime') or props.get('validTime'), 'end':props.get('validTimeTo') or props.get('expireTime') or props.get('validTimeEnd')}
+
+def _airport_weather_alerts(icao,airport,route_ids=None,met=None,taf=None):
+    alerts=[];route_ids=route_ids or []
+    met=met or _aviation_weather_product('metar',icao,90);taf=taf or _aviation_weather_product('taf',icao,600)
+    if met.get('ok') and met.get('data'):
+        d=met['data'][0] if isinstance(met['data'][0],dict) else {};cat=str(d.get('fltCat') or '').upper();wx=str(d.get('wxString') or '');wind=float(d.get('wspd') or 0);gust=float(d.get('wgst') or 0)
+        sev=None;reasons=[]
+        if cat=='LIFR':sev='critical';reasons.append('conditions LIFR')
+        elif cat=='IFR':sev='important';reasons.append('conditions IFR')
+        if 'TS' in wx.upper():sev='critical' if sev=='critical' or gust>=35 else 'important';reasons.append('orage')
+        if gust>=40:sev='critical';reasons.append(f'rafales {gust:.0f} kt')
+        elif gust>=30 and sev!='critical':sev='important';reasons.append(f'rafales {gust:.0f} kt')
+        if sev:alerts.append({'kind':'metar','severity':sev,'category':'weather','title':f'{icao} · météo opérationnelle dégradée','summary':', '.join(reasons)+f'. METAR: {met.get("raw") or "disponible"}','source':'AviationWeather.gov','airport':icao,'airport_name':airport.get('name',''),'lat':airport.get('lat'),'lon':airport.get('lon'),'route_ids':route_ids})
+    if taf.get('ok'):
+        raw=str(taf.get('raw') or '').upper();haz=[]
+        for token,label in [('TS','orages prévus'),('FZRA','pluie verglaçante'),('+SN','fortes chutes de neige'),('SQ','grains')]:
+            if token in raw:haz.append(label)
+        if haz:alerts.append({'kind':'taf','severity':'important','category':'weather','title':f'{icao} · TAF à surveiller','summary':', '.join(haz)+'.','source':'AviationWeather.gov','airport':icao,'airport_name':airport.get('name',''),'lat':airport.get('lat'),'lon':airport.get('lon'),'route_ids':route_ids})
+    return alerts
+
+def _severity_rank(v):return {'critical':0,'important':1,'info':2}.get(v,3)
+
+def _ops_intelligence(db,u):
+    hubs=user_hubs(db,u);routes=db.scalars(select(Route).where(Route.user_id==u.id).order_by(Route.id)).all()
+    airports={};airport_routes={}
+    def add_airport(code,route_id=None,role='hub'):
+        a=airport_for_code(code)
+        if not a:return
+        icao=_clean_icao(a.get('ident'))
+        if not icao:return
+        airports[icao]=a;airport_routes.setdefault(icao,{'route_ids':set(),'roles':set()});airport_routes[icao]['roles'].add(role)
+        if route_id is not None:airport_routes[icao]['route_ids'].add(route_id)
+    for h in hubs:add_airport(h.airport_ident,None,'hub')
+    route_rows=[]
+    for r in routes:
+        o=airport_for_code(r.origin);d=airport_for_code(r.destination)
+        if not o or not d:continue
+        add_airport(r.origin,r.id,'departure');add_airport(r.destination,r.id,'arrival')
+        if r.commercial_destination:add_airport(r.commercial_destination,r.id,'arrival')
+        if r.via:add_airport(r.via,r.id,'via')
+        route_rows.append((r,o,d,_route_samples(o,d)))
+    # Query only hubs + airports that are actually used by the player's network.
+    # Upstream products run concurrently so a slow public service does not serialize
+    # the whole OPS screen. METAR/TAF are batched to stay comfortably below AWC limits.
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        f_notam=pool.submit(_fetch_notams_many,list(airports.keys()))
+        f_met=pool.submit(_aviation_weather_many,'metar',list(airports.keys()),90)
+        f_taf=pool.submit(_aviation_weather_many,'taf',list(airports.keys()),600)
+        f_sig=pool.submit(_fetch_sigmet_geojson)
+        f_watch=pool.submit(_fetch_notams_many,OPS_WATCH_FIRS) if OPS_WATCH_FIRS else None
+        notam=f_notam.result();met_batch=f_met.result();taf_batch=f_taf.result();sig=f_sig.result();watch=f_watch.result() if f_watch else {'by_station':{}}
+    alerts=[]
+    for icao,a in airports.items():
+        meta=airport_routes.get(icao,{});route_ids=sorted(meta.get('route_ids') or [])
+        for n in notam.get('by_station',{}).get(icao,[]):
+            if n.get('severity')=='info':continue
+            sev=n.get('severity','important');role=' / '.join(sorted(meta.get('roles') or []))
+            alerts.append({'kind':'notam','severity':sev,'category':n.get('category'),'title':f'{icao} · {n.get("number") or "NOTAM"}','summary':n.get('text','')[:650],
+                           'source':'FAA NOTAM Search','airport':icao,'airport_name':a.get('name',''),'airport_role':role,'lat':a.get('lat'),'lon':a.get('lon'),'route_ids':route_ids,'start':n.get('start'),'end':n.get('end')})
+        # local weather warnings are useful only for airports the company actually operates.
+        met_row=met_batch.get('by_station',{}).get(icao);taf_row=taf_batch.get('by_station',{}).get(icao)
+        met_obj={'ok':bool(met_row),'data':[met_row] if met_row else [],'raw':(met_row or {}).get('rawOb')}
+        taf_obj={'ok':bool(taf_row),'data':[taf_row] if taf_row else [],'raw':(taf_row or {}).get('rawTAF')}
+        alerts.extend(_airport_weather_alerts(icao,a,route_ids,met_obj,taf_obj))
+    # Worldwide SIGMETs are filtered against the player's route corridors, never dumped globally.
+    for r,o,d,samples in route_rows:
+        for f in sig.get('features') or []:
+            geom=f.get('geometry') or {};bbox=_coords_bbox(geom.get('coordinates'))
+            if _bbox_hits_samples(bbox,samples):alerts.append(_sigmet_alert(f,r.id,o.get('code') or r.origin,d.get('code') or r.destination))
+    # High-priority FIR watch: query live NOTAMs, but surface them only when a player's route
+    # passes through the region envelope.  No conflict state is invented or hard-coded.
+    for region in OPS_WATCH_REGIONS.values():
+        affected_routes=[]
+        west,south,east,north=region['bbox']
+        for r,o,d,samples in route_rows:
+            if _bbox_hits_samples((west,south,east,north),samples,pad=.4):affected_routes.append((r,o,d))
+        if not affected_routes:continue
+        seen=set()
+        live=[]
+        for fir in region['firs']:
+            for n in watch.get('by_station',{}).get(fir,[]):
+                if n.get('severity') not in ('critical','important') or n.get('category')!='airspace':continue
+                k=(n.get('number'),n.get('text'))
+                if k in seen:continue
+                seen.add(k);live.append(n)
+        for n in live:
+            for r,o,d in affected_routes:
+                alerts.append({'kind':'airspace','severity':'critical' if n.get('severity')=='critical' else 'important','category':'airspace',
+                               'title':f'Restriction d’espace aérien · {o.get("code") or r.origin} → {d.get("code") or r.destination}',
+                               'summary':n.get('text','')[:700],'source':'FAA NOTAM Search','route_id':r.id,'origin':o.get('code') or r.origin,'destination':d.get('code') or r.destination,'lat':(float(o.get('lat'))+float(d.get('lat')))/2,'lon':(float(o.get('lon'))+float(d.get('lon')))/2,'start':n.get('start'),'end':n.get('end')})
+    # De-duplicate while preserving the most operationally severe version.
+    uniq={}
+    for a in alerts:
+        key=(a.get('kind'),a.get('title'),a.get('summary','')[:180],a.get('route_id'),a.get('airport'))
+        if key not in uniq or _severity_rank(a.get('severity'))<_severity_rank(uniq[key].get('severity')):uniq[key]=a
+    alerts=sorted(uniq.values(),key=lambda x:(_severity_rank(x.get('severity')),0 if x.get('category')=='airspace' else 1,x.get('airport') or '',x.get('route_id') or 0))
+    crit=sum(1 for x in alerts if x.get('severity')=='critical');imp=sum(1 for x in alerts if x.get('severity')=='important')
+    return {'ok':True,'mode':'relevant-only','provider_notam':'FAA NOTAM Search','provider_weather':'AviationWeather.gov','auth_required':False,
+            'monitored_airports':[{'icao':k,'code':v.get('code'),'name':v.get('name'),'roles':sorted(airport_routes[k]['roles'])} for k,v in airports.items()],
+            'monitored_routes':len(route_rows),'watch_firs':OPS_WATCH_FIRS,'alerts':alerts[:120],
+            'summary':{'critical':crit,'important':imp,'total':len(alerts),'airport_notams':sum(1 for x in alerts if x.get('kind')=='notam'),'weather':sum(1 for x in alerts if x.get('category')=='weather'),'airspace':sum(1 for x in alerts if x.get('category')=='airspace')},
+            'updated_at':datetime.now(timezone.utc).isoformat()}
+
+@app.get('/api/ops/intelligence')
+def api_ops_intelligence(request:Request):
+    with SessionLocal() as db:
+        u=require_user(request,db)
+        return _ops_intelligence(db,u)
 
 @app.get('/api/integrations/fr24/status')
 def api_fr24_status(request:Request):
