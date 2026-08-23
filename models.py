@@ -348,6 +348,18 @@ class AllianceGoalClaim(Base):
     claimed_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
 
 
+class AllianceUpgrade(Base):
+    __tablename__='alliance_upgrades_v13'
+    __table_args__=(UniqueConstraint('alliance_id','code',name='uq_v13_alliance_upgrade'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    alliance_id: Mapped[int]=mapped_column(ForeignKey('player_alliances_v11.id'),index=True)
+    code: Mapped[str]=mapped_column(String(64),index=True)
+    level: Mapped[int]=mapped_column(Integer,default=0)
+    invested: Mapped[float]=mapped_column(Float,default=0)
+    updated_by_user_id: Mapped[int | None]=mapped_column(ForeignKey('users.id'),nullable=True,index=True)
+    updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+
 class HRPolicy(Base):
     __tablename__='hr_policies_v11'
     user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),primary_key=True)

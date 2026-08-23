@@ -288,11 +288,11 @@ def aircraft_spec_from_row(row):
 # as the civil fleet. Their late-game use is gated by the special-operations engine,
 # not hidden from the player.
 SPECIAL_META = {
-    'EC45': {'special_role':'Secours / sécurité civile', 'min_level':61, 'image':'/static/aircraft/real/h145.jpg'},
-    'A139': {'special_role':'SAR / VIP / service public', 'min_level':61, 'image':''},
-    'A400': {'special_role':'Transport stratégique', 'min_level':81, 'image':'/static/aircraft/real/a400m.jpg'},
-    'C30J': {'special_role':'Transport / logistique stratégique', 'min_level':81, 'image':''},
-    'RFAL': {'special_role':'Défense du territoire', 'min_level':81, 'image':'/static/aircraft/real/rafale.jpg'},
+    'EC45': {'special_role':'Secours / sécurité civile', 'min_level':22, 'image':'/static/aircraft/real/h145.jpg'},
+    'A139': {'special_role':'SAR / VIP / service public', 'min_level':24, 'image':''},
+    'A400': {'special_role':'Transport stratégique', 'min_level':32, 'image':'/static/aircraft/real/a400m.jpg'},
+    'C30J': {'special_role':'Transport / logistique stratégique', 'min_level':32, 'image':''},
+    'RFAL': {'special_role':'Défense du territoire', 'min_level':35, 'image':'/static/aircraft/real/rafale.jpg'},
 }
 SPECIAL_AIRCRAFT = {
     'CL2T': {
@@ -301,7 +301,7 @@ SPECIAL_AIRCRAFT = {
         'cruise_kts':180,'max_speed':195,'length_m':19.8,'wingspan_m':28.6,'fuel_capacity_l':12690,
         'range_nm':1300,'range_km':2408,'mtow_kg':19890,'seats':2,'price':42_000_000,'lease':2_300_000,
         'category':'Bombardier d’eau / amphibie','commercial':False,'runway_required_m':950,
-        'source_values_complete':False,'models':[],'special_role':'Sécurité civile / lutte incendie','min_level':66,
+        'source_values_complete':False,'models':[],'special_role':'Sécurité civile / lutte incendie','min_level':26,
         'image':'/static/aircraft/real/cl415.jpg'
     },
     'NH90': {
@@ -310,7 +310,7 @@ SPECIAL_AIRCRAFT = {
         'cruise_kts':160,'max_speed':175,'length_m':19.6,'wingspan_m':16.3,'fuel_capacity_l':2500,
         'range_nm':430,'range_km':796,'mtow_kg':11000,'seats':20,'price':46_000_000,'lease':2_550_000,
         'category':'Hélicoptère','commercial':False,'runway_required_m':0,
-        'source_values_complete':False,'models':[],'special_role':'Service public / transport stratégique','min_level':76,
+        'source_values_complete':False,'models':[],'special_role':'Service public / transport stratégique','min_level':28,
         'image':'/static/aircraft/real/nh90.jpg'
     },
     'MQ9': {
@@ -319,7 +319,7 @@ SPECIAL_AIRCRAFT = {
         'cruise_kts':170,'max_speed':260,'length_m':11.0,'wingspan_m':20.0,'fuel_capacity_l':0,
         'range_nm':1000,'range_km':1852,'mtow_kg':4800,'seats':0,'price':32_000_000,'lease':1_750_000,
         'category':'Surveillance stratégique','commercial':False,'runway_required_m':1100,
-        'source_values_complete':False,'models':[],'special_role':'Surveillance / souveraineté','min_level':81,
+        'source_values_complete':False,'models':[],'special_role':'Surveillance / souveraineté','min_level':30,
         'image':''
     }
 }
