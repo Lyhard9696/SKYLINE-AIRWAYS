@@ -288,11 +288,11 @@ def aircraft_spec_from_row(row):
 # as the civil fleet. Their late-game use is gated by the special-operations engine,
 # not hidden from the player.
 SPECIAL_META = {
-    'EC45': {'special_role':'Secours / sécurité civile', 'min_level':61, 'image':'/static/aircraft/h145.jpg'},
-    'A139': {'special_role':'SAR / VIP / service public', 'min_level':61, 'image':'/static/aircraft/h145.jpg'},
-    'A400': {'special_role':'Transport stratégique', 'min_level':81, 'image':'/static/aircraft/a400m.jpg'},
-    'C30J': {'special_role':'Transport / logistique stratégique', 'min_level':81, 'image':'/static/aircraft/a400m.jpg'},
-    'RFAL': {'special_role':'Défense du territoire', 'min_level':81, 'image':'/static/aircraft/rafale.jpg'},
+    'EC45': {'special_role':'Secours / sécurité civile', 'min_level':61, 'image':'/static/aircraft/real/h145.jpg'},
+    'A139': {'special_role':'SAR / VIP / service public', 'min_level':61, 'image':''},
+    'A400': {'special_role':'Transport stratégique', 'min_level':81, 'image':'/static/aircraft/real/a400m.jpg'},
+    'C30J': {'special_role':'Transport / logistique stratégique', 'min_level':81, 'image':''},
+    'RFAL': {'special_role':'Défense du territoire', 'min_level':81, 'image':'/static/aircraft/real/rafale.jpg'},
 }
 SPECIAL_AIRCRAFT = {
     'CL2T': {
@@ -302,7 +302,7 @@ SPECIAL_AIRCRAFT = {
         'range_nm':1300,'range_km':2408,'mtow_kg':19890,'seats':2,'price':42_000_000,'lease':2_300_000,
         'category':'Bombardier d’eau / amphibie','commercial':False,'runway_required_m':950,
         'source_values_complete':False,'models':[],'special_role':'Sécurité civile / lutte incendie','min_level':66,
-        'image':'/static/aircraft/cl415.jpg'
+        'image':'/static/aircraft/real/cl415.jpg'
     },
     'NH90': {
         'icao':'NH90','iata':'','manufacturer':'NHIndustries','name':'NH90',
@@ -311,7 +311,7 @@ SPECIAL_AIRCRAFT = {
         'range_nm':430,'range_km':796,'mtow_kg':11000,'seats':20,'price':46_000_000,'lease':2_550_000,
         'category':'Hélicoptère','commercial':False,'runway_required_m':0,
         'source_values_complete':False,'models':[],'special_role':'Service public / transport stratégique','min_level':76,
-        'image':'/static/aircraft/h145.jpg'
+        'image':'/static/aircraft/real/nh90.jpg'
     },
     'MQ9': {
         'icao':'MQ9','iata':'','manufacturer':'General Atomics','name':'MQ-9 class surveillance UAV',
@@ -320,7 +320,7 @@ SPECIAL_AIRCRAFT = {
         'range_nm':1000,'range_km':1852,'mtow_kg':4800,'seats':0,'price':32_000_000,'lease':1_750_000,
         'category':'Surveillance stratégique','commercial':False,'runway_required_m':1100,
         'source_values_complete':False,'models':[],'special_role':'Surveillance / souveraineté','min_level':81,
-        'image':'/static/aircraft/a400m.jpg'
+        'image':''
     }
 }
 
@@ -329,15 +329,24 @@ def _specialize(spec):
         return spec
     out=dict(spec)
     out.update(SPECIAL_META.get((out.get('icao') or '').upper(),{}))
-    if not out.get('image'):
-        code=(out.get('icao') or '').upper()
-        if code.startswith('A35'): out['image']='/static/aircraft/a350_card.jpg'
-        elif code.startswith(('B73','B37','B38','B39','B3J')): out['image']='/static/aircraft/b737_card.jpg'
-        elif code.startswith(('A32','A20','A21','A19')): out['image']='/static/aircraft/a321_card.jpg'
-        elif code.startswith(('E17','E19','E75','E95')): out['image']='/static/aircraft/e190_card.jpg'
-        elif code.startswith(('B78','B77','A33','A34','A38')): out['image']='/static/aircraft/a350_card.jpg'
-        elif out.get('category')=='Hélicoptère': out['image']='/static/aircraft/h145.jpg'
-        else: out['image']='/static/aircraft/a350_card.jpg'
+    code=(out.get('icao') or '').upper()
+    # Only use a photograph when its airframe family is known. A wrong photo is
+    # worse than an explicit "photo non disponible" state.
+    verified={
+        'A359':'/static/aircraft/real/a350.jpg','A35K':'/static/aircraft/real/a350.jpg',
+        'A21N':'/static/aircraft/real/a321neo.jpg',
+        'B38M':'/static/aircraft/real/b737max8.jpg','B37M':'/static/aircraft/real/b737max8.jpg',
+        'B39M':'/static/aircraft/real/b737max8.jpg','B3JM':'/static/aircraft/real/b737max8.jpg',
+        'EC45':'/static/aircraft/real/h145.jpg','NH90':'/static/aircraft/real/nh90.jpg',
+        'CL2T':'/static/aircraft/real/cl415.jpg','A400':'/static/aircraft/real/a400m.jpg',
+        'RFAL':'/static/aircraft/real/rafale.jpg',
+    }
+    if code in verified:
+        out['image']=verified[code];out['photo_verified']=True
+    else:
+        # keep a manually curated image only when explicitly supplied; otherwise no fake family photo
+        out['image']=out.get('image','') if out.get('special_role') else ''
+        out['photo_verified']=bool(out.get('image'))
     out.setdefault('special_role','')
     out.setdefault('min_level',1)
     return out
