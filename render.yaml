@@ -10,7 +10,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --limit-concurrency 36 --backlog 64
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -26,6 +26,8 @@ services:
         value: '1'
       - key: MALLOC_ARENA_MAX
         value: '2'
+      - key: PYTHONMALLOC
+        value: 'malloc'
       - key: FR24_API_TOKEN
         sync: false
       - key: FR24_API_BASE_URL
@@ -33,7 +35,7 @@ services:
       - key: FR24_WORLD_CACHE_SECONDS
         value: '45'
       - key: FR24_WORLD_TILE_LIMIT
-        value: '1200'
+        value: '60'
       - key: FR24_WORLD_WORKERS
         value: '1'
       - key: FR24_WORLD_DETAIL

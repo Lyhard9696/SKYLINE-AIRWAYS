@@ -39,7 +39,7 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.4')
+app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.5')
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware('http')
@@ -1105,17 +1105,40 @@ def _hub_service_context(airport,node,current_level=0):
 
 def _hub_service_brands(airport,node,current_level=0):
     ident=str((airport or {}).get('ident') or '').upper();country=str((airport or {}).get('country') or '').upper();code=node.get('code')
-    # Never show a local operator at the wrong airport. Brand tiles are a visual bonus, not a data source.
-    if code=='RAIL' and (ident.startswith('LF') or country in ('FR','FRA','FRANCE')):
-        return ['/static/brands/sncf.svg']
-    if code=='RIDESHARE' and ident in {'LFPG','LFBL','LFMN','KJFK','OMDB','EGLL','MMMX','YSSY','SBGR','EHAM','LEMD'}:
-        return ['/static/brands/uber.svg','/static/brands/bolt.svg'] if ident.startswith('LF') else ['/static/brands/uber.svg']
-    if code=='HOTEL' and ident=='LFPG':
-        return ['/static/brands/novotel.svg','/static/brands/ibis.svg','/static/brands/sheraton.svg']
-    if code in ('DUTYFREE','RETAIL','FOOD') and ident=='LFPG':
-        return {'DUTYFREE':['/static/brands/relay.svg'],'RETAIL':['/static/brands/rolex.svg'],'FOOD':['/static/brands/laduree.svg']}[code]
-    if code in ('TERMINAL','SECURITY','BORDER') and ident=='LFPG':
-        return ['/static/brands/groupeadp.svg']
+    # Visual partner marks are context-aware. Generic transport badges are local SVGs,
+    # while user-supplied brand assets (Uber, SNCF, Rolex, hotels...) are reused only
+    # where the service actually exists.
+    if code=='TRANSIT':
+        if ident=='LFPG':return ['/static/brands/sncf.svg','/static/brands/rer.svg','/static/brands/ratp.svg']
+        return ['/static/brands/bus.svg','/static/brands/taxi.svg']
+    if code=='RAIL':
+        if ident=='LFPG':return ['/static/brands/sncf.svg','/static/brands/rer.svg']
+        if country in ('FR','FRA','FRANCE'):return ['/static/brands/sncf.svg','/static/brands/ter.svg']
+        return []
+    if code=='METRO':
+        if ident=='LFPG':return ['/static/brands/ratp.svg','/static/brands/metro.svg']
+        return ['/static/brands/metro.svg'] if ident in {'LFMN','KJFK','OMDB','EGLL','MMMX'} else []
+    if code=='BUS':return ['/static/brands/bus.svg']
+    if code=='SHUTTLE':return ['/static/brands/bus.svg']
+    if code=='TAXI_ACCESS':return ['/static/brands/taxi.svg']
+    if code=='RIDESHARE':
+        return ['/static/brands/uber.svg','/static/brands/bolt.svg'] if ident.startswith('LF') else ['/static/brands/uber.svg','/static/brands/vtc.svg']
+    if code=='BORDER':return ['/static/brands/paf.svg'] if ident.startswith('LF') else []
+    if code=='SECURITY':return ['/static/brands/groupeadp.svg'] if ident=='LFPG' else []
+    if code=='HOTEL':
+        prof=hub_reality_profile(airport);assets=[]
+        mapping={'novotel':'novotel.svg','novotel suites':'novotel.svg','ibis':'ibis.svg','ibis styles':'ibis.svg','sheraton':'sheraton.svg','pullman':'pullman.svg',
+                 'marriott':'marriott.svg','courtyard by marriott':'marriott.svg','hilton':'hilton.svg','hampton by hilton':'hilton.svg','ihg':'ihg.svg',
+                 'campanile':'campanile.svg','kyriad':'kyriad.svg','best western':'bestwestern.svg'}
+        for name in prof.get('hotel_brands',[]):
+            f=mapping.get(str(name).lower())
+            if f and f'/static/brands/{f}' not in assets:assets.append(f'/static/brands/{f}')
+        return assets[:4]
+    if code=='DUTYFREE':return ['/static/brands/relay.svg'] if ident=='LFPG' else []
+    if code=='RETAIL':return ['/static/brands/rolex.svg'] if ident=='LFPG' else []
+    if code=='FOOD':return ['/static/brands/laduree.svg'] if ident=='LFPG' else []
+    if code=='LOUNGE_BUS' and ident=='LFPG':return ['/static/brands/airfrance.svg']
+    if code=='TERMINAL' and ident=='LFPG':return ['/static/brands/groupeadp.svg']
     return []
 
 def _hub_display_name(airport,node,current_level=0):
@@ -1737,8 +1760,10 @@ class BoundedCache(OrderedDict):
         super().__setitem__(key,value)
         while len(self)>self.maxsize:self.popitem(last=False)
 
-_weather_cache=BoundedCache(96)
-_traffic_cache=BoundedCache(2)
+_weather_cache=BoundedCache(40)
+# Traffic cache stores only small viewport/tile payloads. 16 entries remain well below
+# Render's 512 MB ceiling and avoid refetching identical FR24 tiles while panning.
+_traffic_cache=BoundedCache(16)
 
 @app.get('/api/weather/current')
 def api_weather(lat:float,lon:float):
@@ -1751,7 +1776,7 @@ def api_weather(lat:float,lon:float):
     # should never break the cockpit or OPS page.
     for attempt in range(2):
         try:
-            with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
+            with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
                 r=client.get('https://api.open-meteo.com/v1/forecast',params=params);r.raise_for_status();data=r.json()
             cur=data.get('current') or {}
             if cur:
@@ -1806,11 +1831,11 @@ FR24_WORLD_TILES=[
     '-30,-89.999,-179.999,-90','-30,-89.999,-90,0','-30,-89.999,0,90','-30,-89.999,90,179.999',
 ]
 _world_fetch_lock=threading.Lock()
-_fr24_airline_cache=BoundedCache(384)
-_aircraft_photo_cache=BoundedCache(512)
-_aircraft_type_photo_cache=BoundedCache(768)
+_fr24_airline_cache=BoundedCache(128)
+_aircraft_photo_cache=BoundedCache(96)
+_aircraft_type_photo_cache=BoundedCache(128)
 _fr24_count_cache=BoundedCache(8)
-_fr24_detail_cache=BoundedCache(256)
+_fr24_detail_cache=BoundedCache(96)
 
 COMMON_AIRLINES={
     'AFR':'Air France','KLM':'KLM','BAW':'British Airways','DLH':'Lufthansa','SWR':'SWISS','AUA':'Austrian Airlines','IBE':'Iberia','VLG':'Vueling','RYR':'Ryanair','EZY':'easyJet','ITY':'ITA Airways','SAS':'Scandinavian Airlines','FIN':'Finnair','TAP':'TAP Air Portugal','LOT':'LOT Polish Airlines','AEE':'Aegean Airlines','THY':'Turkish Airlines','WZZ':'Wizz Air','BEL':'Brussels Airlines',
@@ -1834,7 +1859,7 @@ def _fr24_headers():
         'Authorization':f'Bearer {_fr24_token()}',
         'Accept':'application/json',
         'Accept-Version':'v1',
-        'User-Agent':'SKYLINE-Airways/1.3.4'
+        'User-Agent':'SKYLINE-Airways/1.3.5'
     }
 
 def _fr24_normalize(x, airport=None):
@@ -1873,8 +1898,12 @@ def _fr24_normalize(x, airport=None):
 
 def _fetch_fr24(bounds,limit=120,airport=None,modes=('full','light')):
     if not _fr24_token():raise RuntimeError('FR24_API_TOKEN absent')
-    last_error=None;params={'limit':max(1,min(20000,int(limit)))}
+    last_error=None;params={'limit':max(1,min(300,int(limit)))}
     if bounds:params['bounds']=bounds
+    # FR24 also tracks ADS-B ground vehicles. SKYLINE deliberately requests every
+    # aircraft/service category except V (ground vehicles), so trucks/buses never
+    # appear on the hub or globe while real aircraft on the ground remain visible.
+    params['categories']='P,C,M,J,T,H,B,G,D,O,N'
     with httpx.Client(timeout=8.0,headers=_fr24_headers()) as client:
         for mode in modes:
             try:
@@ -1949,7 +1978,7 @@ def _fr24_world_snapshot():
 
 def _opensky_hub(a,span):
     params={'lamin':a['lat']-span,'lomin':a['lon']-span,'lamax':a['lat']+span,'lomax':a['lon']+span}
-    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
+    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
         r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
     states=[]
     for x in raw[:400]:
@@ -1969,7 +1998,7 @@ def _aviation_weather_product(product,icao,ttl):
     errors=[];data=[]
     for host in ('https://aviationweather.gov','https://connect.aviationweather.gov'):
         try:
-            with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
+            with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
                 r=client.get(f'{host}/api/data/{product}',params={'ids':code,'format':'json'});r.raise_for_status();data=r.json()
             if isinstance(data,list):break
         except Exception as e:
@@ -2419,19 +2448,50 @@ def _planespotters_lookup(kind,value):
     value=''.join(ch for ch in str(value or '').upper() if ch.isalnum() or ch=='-')
     if not value:return None
     try:
-        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
+        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
             r=client.get(f'https://api.planespotters.net/pub/photos/{kind}/{value}');r.raise_for_status();d=r.json()
         photos=d.get('photos') or []
         if not photos:return None
         p=photos[0];return {'thumbnail':(p.get('thumbnail') or {}).get('src'),'large':(p.get('large') or {}).get('src'),'photographer':p.get('photographer') or '', 'source_url':p.get('link') or '', 'source':'Planespotters.net'}
     except Exception:return None
 
+def _commons_registration_photo(registration):
+    """Registration-exact fallback for live aircraft photos.
+
+    Only accept Commons results whose title or metadata contains the exact
+    registration. This is intentionally strict: a missing photo is preferable to
+    an airport/terminal image or a different aircraft.
+    """
+    reg=''.join(ch for ch in str(registration or '').upper() if ch.isalnum() or ch=='-')
+    if len(reg)<3:return None
+    try:
+        params={'action':'query','generator':'search','gsrsearch':f'"{reg}" aircraft','gsrnamespace':6,'gsrlimit':8,
+                'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':900,'format':'json','origin':'*'}
+        with httpx.Client(timeout=httpx.Timeout(7.0,connect=3.5),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
+            r=client.get('https://commons.wikimedia.org/w/api.php',params=params);r.raise_for_status();body=r.json()
+        pages=list(((body.get('query') or {}).get('pages') or {}).values())
+        needle=reg.replace('-','')
+        for page in pages:
+            title=str(page.get('title') or '');info=(page.get('imageinfo') or [{}])[0];meta=info.get('extmetadata') or {}
+            hay=' '.join([title,str((meta.get('ImageDescription') or {}).get('value') or ''),str((meta.get('ObjectName') or {}).get('value') or '')]).upper().replace('-','')
+            if needle not in hay:continue
+            low=title.lower()
+            if any(x in low for x in ('airport map','terminal','logo','diagram','drawing','cockpit','interior')):continue
+            url=info.get('thumburl') or info.get('url')
+            if not url:continue
+            return {'thumbnail':url,'large':url,'photographer':re.sub('<[^>]+>','',str((meta.get('Artist') or {}).get('value') or ''))[:120],
+                    'source_url':info.get('descriptionurl') or '', 'source':'Wikimedia Commons · immatriculation exacte',
+                    'license':str((meta.get('LicenseShortName') or {}).get('value') or '')}
+    except Exception:
+        return None
+    return None
+
 @app.get('/api/live-aircraft/photo')
 def api_live_aircraft_photo(request:Request,reg:str='',hex:str=''):
     with SessionLocal() as db:require_user(request,db)
     regkey=''.join(ch for ch in reg.upper() if ch.isalnum() or ch=='-');hexkey=''.join(ch for ch in hex.upper() if ch.isalnum());key=('aircraft-photo',regkey,hexkey);now=time.time();cached=_aircraft_photo_cache.get(key)
     if cached and now-cached[0]<(86400 if cached[1].get('found') else 21600):return cached[1]
-    photo=_planespotters_lookup('reg',regkey) or _planespotters_lookup('hex',hexkey);out={'ok':True,'found':bool(photo),'photo':photo}
+    photo=_planespotters_lookup('reg',regkey) or _planespotters_lookup('hex',hexkey) or _commons_registration_photo(regkey);out={'ok':True,'found':bool(photo),'photo':photo}
     _aircraft_photo_cache[key]=(now,out);return out
 
 def _commons_aircraft_photo(search_text):
@@ -2445,7 +2505,7 @@ def _commons_aircraft_photo(search_text):
     try:
         params={'action':'query','generator':'search','gsrsearch':f'{query} aircraft','gsrnamespace':6,'gsrlimit':12,
                 'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':900,'format':'json','origin':'*'}
-        with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
+        with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:
             r=client.get('https://commons.wikimedia.org/w/api.php',params=params);r.raise_for_status();body=r.json()
         pages=list(((body.get('query') or {}).get('pages') or {}).values())
         tokens=[x.lower() for x in re.findall(r'[A-Za-z0-9]+',query) if len(x)>=3]
@@ -2488,7 +2548,7 @@ def api_live_traffic(ident:str):
     span=.18 if a['type']=='large_airport' else .13 if a['type']=='medium_airport' else .10;fr24_error=None
     if _fr24_token():
         try:
-            bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}";states,fr24_mode=_fetch_fr24(bounds,500,a);ground=sum(1 for x in states if x.get('on_ground'))
+            bounds=f"{a['lat']+span},{a['lat']-span},{a['lon']-span},{a['lon']+span}";states,fr24_mode=_fetch_fr24(bounds,80,a,modes=('light',));ground=sum(1 for x in states if x.get('on_ground'))
             out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'ground_count':ground,'airborne_count':len(states)-ground,'nearby_count':len(states),'real_only':True,'fr24_mode':fr24_mode};_traffic_cache[key]=(now,out);return out
         except httpx.HTTPStatusError as e:fr24_error=f'HTTP {e.response.status_code}'
         except Exception as e:fr24_error=type(e).__name__
@@ -2506,20 +2566,20 @@ def api_live_traffic_world(request:Request):
     return {'source':'Flightradar24 API' if _fr24_token() else 'unavailable','states':[],'configured':bool(_fr24_token()),'real_only':True,'scope':'world-aggregated','total_count':0,'tracked_count':0,'tracked_count_available':False,'airborne_count':0,'ground_count':0,'memory_safe':True,'message':'Vue mondiale agrégée. Zoome pour charger les positions FR24 de la zone visible.'}
 
 @app.get('/api/live-traffic/box')
-def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=5000):
-    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(20,min(1200,limit))
+def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=40):
+    lamin=max(-85,min(85,lamin));lamax=max(-85,min(85,lamax));lomin=max(-180,min(180,lomin));lomax=max(-180,min(180,lomax));limit=max(10,min(60,limit))
     bucket=(round(lamin,1),round(lomin,1),round(lamax,1),round(lomax,1),limit,'fr24' if _fr24_token() else 'opensky');now=time.time();cached=_traffic_cache.get(('box',)+bucket)
     if cached and now-cached[0]<30:return cached[1]
     fr24_error=None
     if _fr24_token():
         try:
-            bounds=f'{lamax},{lamin},{lomin},{lomax}';states,fr24_mode=_fetch_fr24(bounds,limit);ground=sum(1 for x in states if x.get('on_ground'))
+            bounds=f'{lamax},{lamin},{lomin},{lomax}';states,fr24_mode=_fetch_fr24(bounds,limit,modes=('light',));ground=sum(1 for x in states if x.get('on_ground'))
             out={'source':'Flightradar24 API','states':states,'licensed':True,'configured':True,'real_only':True,'fr24_mode':fr24_mode,'scope':'viewport','total_count':len(states),'airborne_count':len(states)-ground,'ground_count':ground,'position_limit':limit,'response_limited':len(states)>=limit};_traffic_cache[('box',)+bucket]=(now,out);return out
         except httpx.HTTPStatusError as e:fr24_error=f'HTTP {e.response.status_code}'
         except Exception as e:fr24_error=type(e).__name__
     try:
         params={'lamin':lamin,'lomin':lomin,'lamax':lamax,'lomax':lomax}
-        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.4'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
+        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.5'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
         states=[]
         for x in raw[:limit]:
             if len(x)<11 or x[5] is None or x[6] is None:continue
@@ -2565,7 +2625,7 @@ def api_special_ops(request:Request,country:str='FR'):
         for code,meta in SPECIAL_BRANCHES.items():
             m=dict(meta);m['code']=code;m['unlocked']=pr['level']>=meta['min_level'];m['owned']=code in owned_by_branch;m['base_count']=sum(1 for b in bases if b.branch==code);m['reason']='Disponible' if m['unlocked'] else f"Niveau {meta['min_level']} requis (actuel {pr['level']})";items.append(m)
         candidates=[]
-        for a in special_base_airports(country,100):
+        for a in special_base_airports(country,60):
             detail=airport_detail(a['ident']) or a;site_fee=int(round(float(detail.get('price') or 0)*.12/50_000)*50_000);candidates.append({**a,'site_fee':site_fee,'owned_branches':[b.branch for b in bases if b.airport_ident==a['ident']]})
         fleet_types=[x for (x,) in db.execute(select(Aircraft.type_icao).where(Aircraft.user_id==u.id)).all()];ct=[]
         for t in SPECIAL_CONTRACT_TEMPLATES:
@@ -2624,61 +2684,22 @@ def _fallback_surface_network(a):
 
 @app.get('/api/hub/{ident}/surface-network')
 def api_surface_network(ident:str,request:Request):
-    """Aeroway geometry from OSM/Overpass when available, with runway fallback."""
+    """Memory-safe local airport plan.
+
+    v1.3.5 intentionally no longer calls Overpass/OSM for a full airport surface
+    network. Large hubs such as CDG can produce very large JSON responses and were
+    the main source of 512 MB Render crashes. The client builds a stylised airport
+    model from the authoritative runway geometry + SKYLINE zone coordinates.
+    """
     with SessionLocal() as db:
         u=require_user(request,db)
         h=db.scalar(select(UserHub).where(UserHub.user_id==u.id,UserHub.airport_ident==ident))
         if not h:raise HTTPException(403,'Hub non possédé')
     a=airport_detail(ident)
     if not a:raise HTTPException(404,'Aéroport introuvable')
-    now=time.time();cached=_surface_cache.get(a['ident'])
-    if cached and now-cached[0] < 6*3600:return cached[1]
-    span={'large_airport':.050,'medium_airport':.040,'small_airport':.026,'heliport':.018}.get(a['type'],.03)
-    south,west,north,east=a['lat']-span,a['lon']-span,a['lat']+span,a['lon']+span
-    q=(
-        '[out:json][timeout:8];('
-        f'way["aeroway"="taxiway"]({south},{west},{north},{east});'
-        f'way["aeroway"="runway"]({south},{west},{north},{east});'
-        f'way["aeroway"="apron"]({south},{west},{north},{east});'
-        f'way["aeroway"="terminal"]({south},{west},{north},{east});'
-        f'node["aeroway"="gate"]({south},{west},{north},{east});'
-        f'node["aeroway"="parking_position"]({south},{west},{north},{east});'
-        ');out body;>;out skel qt;'
-    )
-    out=None
-    try:
-        with httpx.Client(timeout=10,headers={'User-Agent':'SKYLINE-Airways-Realism/0.6'}) as client:
-            r=client.post('https://overpass-api.de/api/interpreter',data={'data':q})
-            r.raise_for_status();raw=r.json()
-        nodes={e['id']:(e.get('lon'),e.get('lat')) for e in raw.get('elements',[]) if e.get('type')=='node' and e.get('lon') is not None and e.get('lat') is not None}
-        features=[]
-        for e in raw.get('elements',[]):
-            if e.get('type')=='way':
-                tags=e.get('tags') or {};kind=tags.get('aeroway')
-                coords=[nodes.get(nid) for nid in e.get('nodes',[])]
-                coords=[list(c) for c in coords if c and c[0] is not None]
-                if len(coords)<2:continue
-                if kind in ('apron','terminal') and len(coords)>=3:
-                    ring=coords + ([coords[0]] if coords[-1]!=coords[0] else [])
-                    geom={'type':'Polygon','coordinates':[ring]}
-                else:
-                    geom={'type':'LineString','coordinates':coords}
-                features.append({'type':'Feature','geometry':geom,'properties':{'kind':kind or 'aeroway','name':tags.get('ref') or tags.get('name') or '', 'surface':tags.get('surface') or '', 'source':'OpenStreetMap','asset_key':f'{kind or "aeroway"}:{e.get("id")}' }})
-            elif e.get('type')=='node':
-                tags=e.get('tags') or {};kind=tags.get('aeroway')
-                if kind in ('gate','parking_position') and e.get('lon') is not None:
-                    features.append({'type':'Feature','geometry':{'type':'Point','coordinates':[e['lon'],e['lat']]},'properties':{'kind':kind,'name':tags.get('ref') or tags.get('name') or '', 'source':'OpenStreetMap','asset_key':f'{kind}:{e.get("id")}' }})
-        # Large airports can contain tens of thousands of OSM objects. Keep only
-        # the operational geometry needed by the game to avoid OOM on 512 MB instances.
-        if features:
-            priority={'runway':0,'terminal':1,'taxiway':2,'gate':3,'parking_position':4,'apron':5}
-            features.sort(key=lambda f: priority.get((f.get('properties') or {}).get('kind'),9))
-            features=features[:1400]
-            out={'type':'FeatureCollection','features':features,'source':'OpenStreetMap / Overpass'}
-    except Exception:
-        out=None
-    if not out:out=_fallback_surface_network(a)
-    _surface_cache[a['ident']]=(now,out)
+    out=_fallback_surface_network(a)
+    out['source']='SKYLINE model · OurAirports runways'
+    out['memory_safe']=True
     return out
 
 @app.post('/api/reset-career')
