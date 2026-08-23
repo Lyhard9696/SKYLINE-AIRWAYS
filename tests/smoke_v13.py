@@ -1,4 +1,4 @@
-"""Smoke tests sans appels réseau externes pour SKYLINE AIRWAYS v1.3.1."""
+"""Smoke tests sans appels réseau externes pour SKYLINE AIRWAYS v1.3.2."""
 from __future__ import annotations
 import os
 import sys
@@ -25,12 +25,12 @@ c=TestClient(main.app)
 def check(cond,msg):
     if not cond: raise AssertionError(msg)
 
-r=c.get('/health'); check(r.status_code==200,'health'); check(r.json()['version']=='1.3.1','version')
+r=c.get('/health'); check(r.status_code==200,'health'); check(r.json()['version']=='1.3.2','version')
 r=c.post('/register',data={'email':'smoke-v13@example.com','username':'smoke-v13','company_name':'Smoke v13','password':'abcdefgh'},follow_redirects=False)
 check(r.status_code==303,'register')
 rows=c.get('/api/airports/search',params={'q':'CDG','limit':5}).json(); check(bool(rows),'airport search')
 r=c.post('/api/hubs/buy',json={'ident':rows[0]['ident']}); check(r.status_code==200,'first hub')
-r=c.get('/game'); check(r.status_code==200,'game'); check('game-v131.js?v=131' in r.text,'v131 JS'); check('premium-v131.css?v=131' in r.text,'v131 CSS')
+r=c.get('/game'); check(r.status_code==200,'game'); check('game-v131.js?v=132' in r.text,'v131 JS'); check('premium-v131.css?v=132' in r.text,'v131 CSS')
 
 for path in ('/api/state','/api/research','/api/alliances','/api/hubs/network','/api/aviation/notam/status','/api/integrations/fr24/status'):
     rr=c.get(path); check(rr.status_code==200,path)
@@ -48,4 +48,4 @@ n=c.get('/api/aviation/notam/status').json(); check(n['configured'] is True and 
 # FR24 sans secret doit être propre également.
 f=c.get('/api/integrations/fr24/world-summary').json(); check(f['configured'] is False,'FR24 secret state')
 
-print('SKYLINE v1.3.1 smoke: OK')
+print('SKYLINE v1.3.2 smoke: OK')

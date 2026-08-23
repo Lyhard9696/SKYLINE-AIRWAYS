@@ -48,6 +48,19 @@ class HubUpgrade(Base):
     code: Mapped[str]=mapped_column(String(64),index=True)
     level: Mapped[int]=mapped_column(Integer,default=0)
 
+
+class HubConstruction(Base):
+    __tablename__='hub_constructions_v132'
+    __table_args__=(UniqueConstraint('user_id','airport_ident','code',name='uq_v132_hub_construction'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    airport_ident: Mapped[str]=mapped_column(String(16),index=True)
+    code: Mapped[str]=mapped_column(String(64),index=True)
+    target_level: Mapped[int]=mapped_column(Integer,default=1)
+    price: Mapped[float]=mapped_column(Float,default=0)
+    started_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    completes_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc)+timedelta(minutes=5))
+
 class Aircraft(Base):
     __tablename__='aircraft_v4'
     id: Mapped[int]=mapped_column(Integer,primary_key=True)

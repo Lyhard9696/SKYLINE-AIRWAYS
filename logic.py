@@ -43,6 +43,13 @@ UPGRADES = [
     dict(code='PARK_LONG', name='Parking longue durée', cat='Commercial', max=12, cost=1_100_000, bearing=290, dist=1250, desc='Parking longue durée avec navettes.', prereq='PARK_SHORT'),
     dict(code='PARK_PREM', name='Parking premium', cat='Commercial', max=10, cost=1_500_000, bearing=308, dist=900, desc='Voiturier, recharge EV et clientèle premium.', prereq='PARK_SHORT'),
     dict(code='TRANSIT', name='Hub transports terrestres', cat='Commercial', max=10, cost=2_600_000, bearing=325, dist=1050, desc='Bus, taxis, navettes, rail et intermodalité.', prereq=None),
+    dict(code='RAIL', name='Gare ferroviaire / RER', cat='Commercial', max=8, cost=3_600_000, bearing=334, dist=1100, desc='Connexion ferroviaire directe, trains régionaux et grande vitesse selon le pays.', prereq='TRANSIT'),
+    dict(code='METRO', name='Métro / transport urbain', cat='Commercial', max=8, cost=2_800_000, bearing=343, dist=1010, desc='Accès métro, tram ou liaison urbaine rapide vers le bassin de population.', prereq='TRANSIT'),
+    dict(code='BUS', name='Bus & lignes urbaines', cat='Commercial', max=8, cost=420_000, bearing=348, dist=960, desc='Quais bus, information voyageurs et connexion au réseau local.', prereq='TRANSIT'),
+    dict(code='SHUTTLE', name='Navettes aéroport', cat='Commercial', max=8, cost=520_000, bearing=350, dist=930, desc='Navettes vers gare, centre-ville, hôtels et parkings éloignés.', prereq='TRANSIT'),
+    dict(code='TAXI_ACCESS', name='Taxis officiels', cat='Commercial', max=6, cost=380_000, bearing=351, dist=910, desc='Station taxis régulée, file numérique et prise en charge protégée.', prereq='TRANSIT'),
+    dict(code='RIDESHARE', name='Uber / Bolt & VTC', cat='Commercial', max=6, cost=650_000, bearing=352, dist=900, desc='Zone VTC dédiée, prise en charge digitale et fluidité du dernier kilomètre.', prereq='TRANSIT'),
+    dict(code='CAR_RENTAL', name='Location de voitures', cat='Commercial', max=6, cost=720_000, bearing=354, dist=940, desc='Comptoirs, parc de véhicules et parcours de prise en charge simplifié.', prereq='TRANSIT'),
 
     dict(code='LOUNGE_BUS', name='Lounge Business', cat='Premium', max=10, cost=1_300_000, bearing=343, dist=290, desc='Salon affaires, restauration, douches et espaces de travail.', prereq='TERMINAL'),
     dict(code='LOUNGE_FIRST', name='Lounge First', cat='Premium', max=10, cost=2_300_000, bearing=358, dist=285, desc='Suites, dining, spa, concierge et transfert premium.', prereq='LOUNGE_BUS'),

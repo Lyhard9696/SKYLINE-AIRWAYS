@@ -31,11 +31,11 @@ services:
       - key: FR24_API_BASE_URL
         value: 'https://fr24api.flightradar24.com/api'
       - key: FR24_WORLD_CACHE_SECONDS
-        value: '180'
+        value: '45'
       - key: FR24_WORLD_TILE_LIMIT
-        value: '20000'
+        value: '1200'
       - key: FR24_WORLD_WORKERS
-        value: '3'
+        value: '1'
       - key: FR24_WORLD_DETAIL
         value: 'light'
       - key: FR24_COUNT_CACHE_SECONDS

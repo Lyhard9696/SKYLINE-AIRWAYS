@@ -1,6 +1,19 @@
-# SKYLINE AIRWAYS — v1.3.1 Relevant OPS
+# SKYLINE AIRWAYS — v1.3.3 Premium Operations
 
-Build FastAPI/SQLAlchemy/MapLibre du projet SKYLINE AIRWAYS. Cette révision remplace la dépendance NOTAM payante de v1.3 par une veille opérationnelle gratuite et ciblée.
+Build FastAPI/SQLAlchemy/MapLibre du projet SKYLINE AIRWAYS, optimisée pour Render 512 Mo et l’interface premium des maquettes validées.
+
+## v1.3.3
+
+- **Globe FR24 mémoire-safe** : aucun snapshot mondial de positions au démarrage ; compteur/agrégation à faible zoom, puis positions de la zone visible seulement.
+- **Avions au sol cliquables** : détail FR24 ciblé au clic avec fallback live local, plus photo par immatriculation/hex lorsqu’elle est disponible.
+- **Hub hiérarchique** : grandes zones sur la carte puis sous-améliorations au clic. Gris = verrouillé, jaune = déblocable, orange = travaux, vert = opérationnel.
+- **Mobilité contextuelle** : les transports et partenaires dépendent réellement de l’aéroport (ex. CDG peut proposer TGV/RER ; un aéroport régional sans métro n’en propose pas).
+- **Marques/photos fiables** : constructeurs, compagnies et partenaires utilisent les assets fournis seulement lorsqu’ils correspondent au contexte.
+- **Accueil nettoyé** : les visuels Duty Free, lounges, PAF, transports, etc. sont réservés aux améliorations du hub.
+- **Special Ops** : choix du pays, carte nationale interactive et achat de bases spécialisées sur la carte.
+- NOTAM/SIGMET ciblés de v1.3.1 conservés.
+
+Voir `CHANGELOG_v1.3.3.md` et `FR24_SETUP_v1.3.2.md`.
 
 ## v1.3.1
 
