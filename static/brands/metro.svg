@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 110">
+<rect x="2" y="2" width="356" height="106" rx="18" fill="#071722" stroke="#52c7ff" stroke-width="3"/>
+<rect x="18" y="22" width="8" height="66" rx="4" fill="#52c7ff"/>
+<text x="45" y="59" font-family="Arial,Helvetica,sans-serif" font-size="34" font-weight="700" fill="#f5f8fa">MÉTRO</text>
+<text x="46" y="83" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#52c7ff">Transport urbain</text>
+</svg>

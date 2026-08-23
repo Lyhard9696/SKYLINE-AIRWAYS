@@ -1,4 +1,4 @@
-const CACHE='skyline-v134-premium-zones-v1';
+const CACHE='skyline-v135-memory-safe-hubs-v1';
 const CORE=['/static/icon-192.png','/static/icon-512.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).catch(()=>{}));});
 self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k!==CACHE)await caches.delete(k);await self.clients.claim();})()));
