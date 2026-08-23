@@ -1,7 +1,4 @@
-# SKYLINE AIRWAYS — v0.8 REALISM RESTORE
-
-> **Important v0.8** — cette build corrige la régression JavaScript de la v0.7.1, restaure les vues et interactions perdues, rétablit météo + trafic, ajoute le catalogue photo et les activités Secours / Sécurité civile / Opérations stratégiques. Voir `CHANGELOG_v0.8.md` et `DEPLOY_v0.8.md`.
-
+# SKYLINE AIRWAYS — v0.6 PREMIUM REALISM
 
 Mise à jour jouable de SKYLINE AIRWAYS pour Render, iPhone/iPad et PC. Cette version conserve le moteur full-stack de la v0.5.1 Stability et refond l’expérience autour d’une interface plus réaliste, plus claire et moins « science-fiction ».
 
@@ -27,7 +24,7 @@ Tu peux laisser Render redéployer automatiquement après le commit.
 Commit conseillé :
 
 ```text
-SKYLINE v0.8 Realism Restore
+SKYLINE v0.6 Premium Realism
 ```
 
 La base PostgreSQL existante reste compatible. Les nouvelles tables v0.6 sont créées automatiquement au démarrage.

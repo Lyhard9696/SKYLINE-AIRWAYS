@@ -267,3 +267,87 @@ class SpecialContract(Base):
     status: Mapped[str]=mapped_column(String(24),default='active')
     starts_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
     ends_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc)+timedelta(days=14))
+
+# -------- v1.1 functional premium systems --------
+class GameWallet(Base):
+    __tablename__='game_wallets_v11'
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),primary_key=True)
+    tokens: Mapped[int]=mapped_column(Integer,default=500)
+    updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class ShopEntitlement(Base):
+    __tablename__='shop_entitlements_v11'
+    __table_args__=(UniqueConstraint('user_id','item_code',name='uq_v11_shop_entitlement'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    item_code: Mapped[str]=mapped_column(String(80),index=True)
+    item_type: Mapped[str]=mapped_column(String(40),default='item')
+    acquired_with: Mapped[str]=mapped_column(String(24),default='tokens')
+    acquired_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class AirlineAllianceMembership(Base):
+    __tablename__='airline_alliance_memberships_v11'
+    __table_args__=(UniqueConstraint('user_id',name='uq_v11_airline_alliance_user'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    alliance_code: Mapped[str]=mapped_column(String(40),index=True)
+    joined_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class PlayerAlliance(Base):
+    __tablename__='player_alliances_v11'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    name: Mapped[str]=mapped_column(String(80),unique=True,index=True)
+    tag: Mapped[str]=mapped_column(String(8),unique=True,index=True)
+    founder_user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    treasury: Mapped[float]=mapped_column(Float,default=0)
+    xp: Mapped[int]=mapped_column(Integer,default=0)
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class PlayerAllianceMember(Base):
+    __tablename__='player_alliance_members_v11'
+    __table_args__=(UniqueConstraint('user_id',name='uq_v11_player_alliance_user'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    alliance_id: Mapped[int]=mapped_column(ForeignKey('player_alliances_v11.id'),index=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    role: Mapped[str]=mapped_column(String(24),default='member')
+    contribution: Mapped[float]=mapped_column(Float,default=0)
+    joined_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class AllianceMessage(Base):
+    __tablename__='alliance_messages_v11'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    alliance_id: Mapped[int]=mapped_column(ForeignKey('player_alliances_v11.id'),index=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    message: Mapped[str]=mapped_column(String(500))
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc),index=True)
+
+
+class HRPolicy(Base):
+    __tablename__='hr_policies_v11'
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),primary_key=True)
+    enabled: Mapped[bool]=mapped_column(Boolean,default=True)
+    monthly_budget: Mapped[float]=mapped_column(Float,default=9_000_000)
+    target_buffer_percent: Mapped[int]=mapped_column(Integer,default=15)
+    last_autohire_at: Mapped[datetime | None]=mapped_column(DateTime(timezone=True),nullable=True)
+    updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class IPOState(Base):
+    __tablename__='ipo_states_v11'
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),primary_key=True)
+    is_public: Mapped[bool]=mapped_column(Boolean,default=False)
+    ticker: Mapped[str]=mapped_column(String(12),default='SKY')
+    equity_sold_percent: Mapped[float]=mapped_column(Float,default=0)
+    cash_raised: Mapped[float]=mapped_column(Float,default=0)
+    share_price: Mapped[float]=mapped_column(Float,default=0)
+    market_confidence: Mapped[float]=mapped_column(Float,default=65)
+    launched_at: Mapped[datetime | None]=mapped_column(DateTime(timezone=True),nullable=True)
+    updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class CompanyResearch(Base):
+    __tablename__='company_research_v11'
+    __table_args__=(UniqueConstraint('user_id','code',name='uq_v11_company_research'),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    code: Mapped[str]=mapped_column(String(64),index=True)
+    level: Mapped[int]=mapped_column(Integer,default=0)
+    updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))

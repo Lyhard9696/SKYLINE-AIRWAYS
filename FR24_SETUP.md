@@ -1,56 +1,50 @@
-# SKYLINE AIRWAYS — Flightradar24 API (v0.8)
+# SKYLINE AIRWAYS — Flightradar24 API setup (v0.7.1)
 
-## Secret
+## Security first
+The API token must exist **only** as a server-side environment variable. Never paste a production token into `game.js`, HTML, CSS, GitHub, screenshots, or `render.yaml` values.
 
-Le token doit rester **uniquement côté serveur**. Il ne doit jamais être placé dans `game.js`, HTML, CSS, une capture, un commit GitHub ou une valeur en clair dans `render.yaml`.
+If a token has been posted in a chat or other shared location, revoke it in the Flightradar24 API portal and create a fresh one before deployment.
 
-Un token déjà partagé dans une conversation doit être révoqué puis remplacé.
+## Render
+1. Open the Render service `skyline-airways`.
+2. Environment → Add Environment Variable.
+3. Key: `FR24_API_TOKEN`.
+4. Value: paste the newly rotated production API token.
+5. Save and redeploy.
 
-## Render — service existant
+`render.yaml` declares `FR24_API_TOKEN` with `sync: false`, so the secret is never committed.
 
-1. Dashboard Render → service `skyline-airways`.
-2. `Environment` → `Add Environment Variable`.
-3. Key : `FR24_API_TOKEN`.
-4. Value : nouveau token régénéré.
-5. `Save Changes`.
-6. Redéployer le dernier commit.
+## What changed
+- Hub traffic now uses the official FR24 API when configured; previously the hub endpoint was still OpenSky-only while the globe endpoint supported FR24.
+- Requests send `Authorization: Bearer ...`, `Accept: application/json`, and `Accept-Version: v1`.
+- Bounds use the FR24 `N,S,W,E` format.
+- Ground traffic at airports such as CDG and Limoges is inferred relative to the airport elevation, distance, and groundspeed instead of the broken `alt < 200 ft` rule.
+- The hub shows both surface aircraft and low terminal-area traffic.
+- Fake/decorative aircraft are disabled in the hub ultra-realism layer. If live data is unavailable, the game says so instead of inventing traffic.
+- The frontend never receives the API token.
 
-`render.yaml` utilise `sync: false`, donc aucune valeur secrète n'est stockée dans le dépôt.
+## Diagnostic endpoint
+After logging into SKYLINE, open:
 
-Le backend accepte aussi les alias `FLIGHTRADAR24_API_TOKEN`, `FLIGHTRADAR_TOKEN` et `FR24_TOKEN`, mais `FR24_API_TOKEN` reste le nom recommandé.
+`/api/integrations/fr24/status`
 
-## Diagnostic intégré
+Expected with a token configured:
 
-Dans le jeu : `Plus → Centre OPS & diagnostics → Tester FR24 + météo`.
+```json
+{"configured":true,"provider":"Flightradar24 API","api_version":"v1","secret_location":"server environment","token_exposed":false}
+```
 
-Le serveur essaie d'abord la réponse `full`; si le plan ou l'autorisation ne la permet pas, il tente la réponse `light`. Le frontend affiche le mode réellement utilisé.
+Then test a hub:
 
-Endpoints utiles après connexion :
+`/api/live-traffic?ident=CDG`
 
-- `/api/integrations/fr24/status`
-- `/api/integrations/fr24/test?ident=LFPG`
-- `/api/live-traffic?ident=LFPG`
-- `/api/live-traffic/box?north=50&south=48&west=1&east=4`
+Look for:
+- `source: "Flightradar24 API"`
+- `configured: true`
+- `ground_count`
+- `nearby_count`
 
-Aucun de ces endpoints ne renvoie le token.
+If FR24 rejects the request, the endpoint falls back to OpenSky and includes only a sanitized status such as `fr24_error: "HTTP 401"`; the token itself is never returned.
 
-## Trafic au hub
-
-La détection du trafic au sol n'utilise plus la règle incorrecte « altitude < 200 ft ». Elle combine :
-- distance au point de référence de l'aéroport ;
-- élévation de l'aéroport ;
-- altitude de l'appareil ;
-- vitesse sol / état `on_ground` quand disponible.
-
-Cela permet notamment à CDG et aux aéroports situés plus haut que le niveau de la mer d'être traités correctement.
-
-## Si aucun avion n'apparaît
-
-Le Centre OPS donne le premier diagnostic. Vérifie dans cet ordre :
-1. `configured: true` ;
-2. test FR24 `OK` ;
-3. nombre de positions > 0 ;
-4. `ground_count` / `nearby_count` ;
-5. que le bouton `✈ Trafic` du hub est actif.
-
-En l'absence de trafic réel, la v0.8 n'invente pas de faux appareils pour remplir le tarmac.
+## Credit control
+The hub endpoint is cached for about 22 seconds and the globe endpoint for about 24 seconds. The result limit is capped server-side to reduce unnecessary API credit usage.

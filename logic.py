@@ -251,7 +251,7 @@ def aircraft_service_score(service):
     return sum(vals)/(len(vals)*10) if vals else 0
 
 
-def economy_detailed(origin,destination,spec,reputation=50,settings=None,service=None,marketing_boost=0,partner_bonus=0,staff_cost_factor=1.0):
+def economy_detailed(origin,destination,spec,reputation=50,settings=None,service=None,marketing_boost=0,partner_bonus=0,staff_cost_factor=1.0,technology_factor=1.0):
     d=haversine_km(origin['lat'],origin['lon'],destination['lat'],destination['lon'])
     seats=max(1,spec['seats'])
     market=55+d*0.095
@@ -274,7 +274,7 @@ def economy_detailed(origin,destination,spec,reputation=50,settings=None,service
     total=sum(shares.values());shares={k:v/total for k,v in shares.items()}
     revenue=pax*(shares['economy']*eco+shares['premium']*prem+shares['business']*biz+shares['first']*first)
     ancillary=pax*(baggage*.28 + 4 + svc*12) + revenue*partner_bonus
-    fuel_cost=(d/1000)*max(900,(spec.get('mtow_kg') or 60000)/65)*.82
+    fuel_cost=(d/1000)*max(900,(spec.get('mtow_kg') or 60000)/65)*.82*max(.72,min(1.0,technology_factor))
     fees=1400+seats*8+(2800 if destination.get('type')=='large_airport' else 900)
     crew=(900+d*.18)*staff_cost_factor
     service_cost=pax*(2.5+svc*18)
