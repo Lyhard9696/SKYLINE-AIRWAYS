@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-label="Airbus A350 neutral silhouette">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#102b40"/><stop offset="1" stop-color="#06131d"/></linearGradient></defs>
+  <rect width="1200" height="675" fill="url(#g)"/>
+  <g fill="#dceaf3" opacity=".94" transform="translate(110 175)">
+    <path d="M38 165 770 128c63-3 112-14 158-36l83-40 29 9-73 74 94 43-14 22-111-27c-43-11-87-16-132-14l-186 8-153 127-35-5 59-115-290 12-91 73-28-4 28-76-101 3z"/>
+    <path d="M602 158 751 29l33 4-78 128z" opacity=".72"/>
+  </g>
+  <text x="70" y="590" fill="#8fb2c8" font-family="system-ui, sans-serif" font-size="34" letter-spacing="8">AIRBUS A350 · VISUEL NEUTRE</text>
+</svg>
