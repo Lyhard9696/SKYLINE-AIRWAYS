@@ -36,7 +36,7 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='0.5')
+app=FastAPI(title='SKYLINE AIRWAYS',version='0.6')
 app.mount('/static',StaticFiles(directory=os.path.join(APP_DIR,'static')),name='static')
 templates=Jinja2Templates(directory=os.path.join(APP_DIR,'templates'))
 signer=URLSafeSerializer(SECRET_KEY,salt='skyline-v4')

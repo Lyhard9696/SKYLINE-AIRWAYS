@@ -1,3 +1,5 @@
+# SKYLINE AIRWAYS v0.6 — Aviation Premium
+
 # SKYLINE AIRWAYS — v0.5 REALISM OPERATIONS
 
 Version Web full-stack jouable, pensée pour Render, iPhone/iPad et PC. Cette version garde la carrière v0.4 et ajoute une couche de gestion beaucoup plus profonde : personnel, pricing, finance, banque, marketing, partenariats, hôtels, service à bord, opérations au sol, hub réellement achetable et trafic réel optionnel.
