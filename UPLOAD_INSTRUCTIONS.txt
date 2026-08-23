@@ -1,0 +1,13 @@
+SKYLINE AIRWAYS v0.8.2 HOTFIX ONLY
+
+Replace exactly these files in the GitHub repository:
+- main.py
+- static/game.js
+- static/game-v082.js   (new file)
+- static/sw.js
+- templates/game.html
+- CHANGELOG_v0.8.2.md   (new file, optional for runtime)
+
+Do NOT upload this ZIP to the repository. Unzip it first, then replace the files above.
+After Render deploys, fully close the iPhone/PWA once and reopen it.
+The page now loads /static/game-v082.js, so an old cached game.js cannot be used.

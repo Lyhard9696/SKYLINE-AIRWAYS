@@ -36,7 +36,18 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='0.8.1')
+app=FastAPI(title='SKYLINE AIRWAYS',version='0.8.2')
+
+@app.middleware('http')
+async def skyline_no_stale_code(request:Request, call_next):
+    response=await call_next(request)
+    path=request.url.path
+    if path=='/game' or path.endswith('.js') or path.endswith('.css') or path.endswith('.html'):
+        response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma']='no-cache'
+        response.headers['Expires']='0'
+    return response
+
 app.mount('/static',StaticFiles(directory=os.path.join(APP_DIR,'static')),name='static')
 templates=Jinja2Templates(directory=os.path.join(APP_DIR,'templates'))
 signer=URLSafeSerializer(SECRET_KEY,salt='skyline-v4')
@@ -490,7 +501,7 @@ def daily_quests(db,u):
 
 # -------- Page routes --------
 @app.get('/health')
-def health():return {'status':'ok','version':'0.8.1','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
+def health():return {'status':'ok','version':'0.8.2','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
 
 @app.get('/')
 def root(request:Request):
