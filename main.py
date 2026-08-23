@@ -39,7 +39,7 @@ engine=create_engine(DATABASE_URL,pool_pre_ping=True,connect_args=connect_args)
 SessionLocal=sessionmaker(bind=engine,expire_on_commit=False)
 Base.metadata.create_all(engine)
 
-app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.3')
+app=FastAPI(title='SKYLINE AIRWAYS',version='1.3.4')
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware('http')
@@ -753,7 +753,7 @@ def daily_quests(db,u):
 
 # -------- Page routes --------
 @app.get('/health')
-def health():return {'status':'ok','version':'1.3.3','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
+def health():return {'status':'ok','version':'1.3.4','catalog':'85k+ airports / 591+ aircraft types','sim_speed':SIM_SPEED,'fr24_configured':bool(_fr24_token()) if '_fr24_token' in globals() else False}
 
 @app.get('/')
 def root(request:Request):
@@ -1751,7 +1751,7 @@ def api_weather(lat:float,lon:float):
     # should never break the cockpit or OPS page.
     for attempt in range(2):
         try:
-            with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.3'}) as client:
+            with httpx.Client(timeout=httpx.Timeout(7.5,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
                 r=client.get('https://api.open-meteo.com/v1/forecast',params=params);r.raise_for_status();data=r.json()
             cur=data.get('current') or {}
             if cur:
@@ -1834,7 +1834,7 @@ def _fr24_headers():
         'Authorization':f'Bearer {_fr24_token()}',
         'Accept':'application/json',
         'Accept-Version':'v1',
-        'User-Agent':'SKYLINE-Airways/1.3.3'
+        'User-Agent':'SKYLINE-Airways/1.3.4'
     }
 
 def _fr24_normalize(x, airport=None):
@@ -1892,31 +1892,50 @@ def _fetch_fr24(bounds,limit=120,airport=None,modes=('full','light')):
     if last_error:raise last_error
     return [],modes[0]
 
-def _fr24_live_count():
-    """Cheap global count endpoint: tells the UI how many positions FR24 tracks now.
-    It does not bypass the subscription response limit for position downloads.
+def _fr24_live_count(bounds=None):
+    """Return a filtered FR24 count only when explicit bounds are supplied.
+
+    FR24's live positions count endpoint requires at least one filter.  v1.3.3
+    incorrectly called it without filters for a planet-wide dashboard number, which
+    made the MONDE diagnostic fail even while normal live-position calls worked.
+    We deliberately do not perform a global count here: the globe is viewport-
+    adaptive and a planet-wide count is not needed to render aircraft.
     """
-    now=time.time();cached=_fr24_count_cache.get('live')
-    if cached and now-cached[0]<FR24_COUNT_CACHE_SECONDS:return cached[1]
-    if not _fr24_token():return {'ok':False,'count':0,'reason':'FR24 non configuré'}
+    if not _fr24_token():
+        return {'ok':False,'count':0,'reason':'FR24 non configuré'}
+    if not bounds:
+        return {'ok':True,'count':0,'available':False,'reason':'Compteur mondial désactivé en mode mémoire sûre'}
+    key=('count',str(bounds))
+    now=time.time();cached=_fr24_count_cache.get(key)
+    if cached and now-cached[0]<FR24_COUNT_CACHE_SECONDS:
+        return cached[1]
     try:
         with httpx.Client(timeout=httpx.Timeout(7.0,connect=3.5),headers=_fr24_headers(),follow_redirects=True) as client:
-            r=client.get(f'{FR24_BASE_URL}/live/flight-positions/count');r.raise_for_status();body=r.json()
+            r=client.get(f'{FR24_BASE_URL}/live/flight-positions/count',params={'bounds':bounds})
+            r.raise_for_status();body=r.json()
         count=None
-        if isinstance(body,(int,float)):count=int(body)
+        if isinstance(body,(int,float)):
+            count=int(body)
         elif isinstance(body,dict):
-            for key in ('count','total','total_count','live_flight_positions'):
-                if isinstance(body.get(key),(int,float)):
-                    count=int(body[key]);break
-            if count is None and isinstance(body.get('data'),dict):
-                for key in ('count','total','total_count'):
-                    if isinstance(body['data'].get(key),(int,float)):
-                        count=int(body['data'][key]);break
-            if count is None and isinstance(body.get('data'),(int,float)):count=int(body['data'])
-        out={'ok':count is not None,'count':int(count or 0),'raw_shape':type(body).__name__}
+            # Current/future-compatible common response shapes.
+            for key_name in ('count','total','total_count','live_flight_positions','flight_count'):
+                if isinstance(body.get(key_name),(int,float)):
+                    count=int(body[key_name]);break
+            data=body.get('data')
+            if count is None and isinstance(data,(int,float)):
+                count=int(data)
+            elif count is None and isinstance(data,dict):
+                for key_name in ('count','total','total_count','flight_count','live_flight_positions'):
+                    if isinstance(data.get(key_name),(int,float)):
+                        count=int(data[key_name]);break
+        out={'ok':count is not None,'count':int(count or 0),'available':count is not None}
+        if count is None: out['reason']='Réponse count FR24 non reconnue'
+    except httpx.HTTPStatusError as e:
+        out={'ok':False,'count':0,'available':False,'reason':f'HTTP {e.response.status_code}'}
     except Exception as e:
-        out={'ok':False,'count':0,'reason':type(e).__name__}
-    _fr24_count_cache['live']=(now,out);return out
+        out={'ok':False,'count':0,'available':False,'reason':type(e).__name__}
+    _fr24_count_cache[key]=(now,out)
+    return out
 
 
 def _fr24_world_snapshot():
@@ -1926,12 +1945,11 @@ def _fr24_world_snapshot():
     only the global FR24 tracked count; actual positions are loaded through
     /api/live-traffic/box for the visible viewport.
     """
-    count_info=_fr24_live_count();tracked=int(count_info.get('count') or 0)
-    return {'source':'Flightradar24 API','states':[],'licensed':True,'configured':bool(_fr24_token()),'real_only':True,'fr24_mode':'viewport-adaptive','scope':'world-aggregated','total_count':0,'airborne_count':0,'ground_count':0,'tracked_count':tracked,'coverage_pct':None,'subscription_limited':False,'partial':False,'memory_safe':True,'generated_at':datetime.now(timezone.utc).isoformat()}
+    return {'source':'Flightradar24 API','states':[],'licensed':True,'configured':bool(_fr24_token()),'real_only':True,'fr24_mode':'viewport-adaptive','scope':'world-aggregated','total_count':0,'airborne_count':0,'ground_count':0,'tracked_count':0,'tracked_count_available':False,'coverage_pct':None,'subscription_limited':False,'partial':False,'memory_safe':True,'generated_at':datetime.now(timezone.utc).isoformat()}
 
 def _opensky_hub(a,span):
     params={'lamin':a['lat']-span,'lomin':a['lon']-span,'lamax':a['lat']+span,'lomax':a['lon']+span}
-    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.3'}) as client:
+    with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
         r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
     states=[]
     for x in raw[:400]:
@@ -1951,7 +1969,7 @@ def _aviation_weather_product(product,icao,ttl):
     errors=[];data=[]
     for host in ('https://aviationweather.gov','https://connect.aviationweather.gov'):
         try:
-            with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.3'}) as client:
+            with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
                 r=client.get(f'{host}/api/data/{product}',params={'ids':code,'format':'json'});r.raise_for_status();data=r.json()
             if isinstance(data,list):break
         except Exception as e:
@@ -2300,8 +2318,7 @@ def api_fr24_status(request:Request):
 def api_fr24_world_summary(request:Request):
     with SessionLocal() as db:require_user(request,db)
     if not _fr24_token():return {'ok':False,'configured':False,'provider':'Flightradar24','tracked_count':0,'reason':'FR24_API_TOKEN absent'}
-    count_info=_fr24_live_count()
-    return {'ok':bool(count_info.get('ok')),'configured':True,'provider':'Flightradar24','scope':'world-count-only','tracked_count':int(count_info.get('count') or 0),'loaded_count':0,'airborne_count':0,'ground_count':0,'coverage_pct':None,'subscription_limited':False,'memory_safe':True,"message":"Le globe mondial n'importe plus un snapshot planétaire en mémoire. Les avions sont chargés uniquement dans la zone visible."}
+    return {'ok':True,'configured':True,'provider':'Flightradar24','scope':'viewport-adaptive','tracked_count':0,'tracked_count_available':False,'loaded_count':0,'airborne_count':0,'ground_count':0,'coverage_pct':None,'subscription_limited':False,'memory_safe':True,'message':"API FR24 configurée. Le globe charge uniquement les positions de la zone visible; aucun compteur planétaire n'est interrogé."}
 
 @app.get('/api/integrations/fr24/test')
 def api_fr24_test(request:Request,ident:str='CDG'):
@@ -2314,7 +2331,7 @@ def api_fr24_test(request:Request,ident:str='CDG'):
         states,mode=_fetch_fr24(bounds,25,a);ground=sum(1 for x in states if x.get('on_ground'))
         return {'ok':True,'configured':True,'provider':'Flightradar24','mode':mode,'airport':a['code'],'scope':'diagnostic_local','bounds':bounds,
                 'count':len(states),'ground_count':ground,'airborne_count':len(states)-ground,
-                'message':'Test local autour du hub uniquement. Le Globe utilise un balayage mondial séparé.'}
+                'message':'Test local autour du hub uniquement. Le Globe charge ensuite FR24 par zone visible.'}
     except httpx.HTTPStatusError as e:
         return {'ok':False,'configured':True,'provider':'Flightradar24','status_code':e.response.status_code,'reason':'Clé refusée, crédit/plan insuffisant, ou endpoint non autorisé.'}
     except Exception as e:return {'ok':False,'configured':True,'provider':'Flightradar24','reason':type(e).__name__}
@@ -2402,7 +2419,7 @@ def _planespotters_lookup(kind,value):
     value=''.join(ch for ch in str(value or '').upper() if ch.isalnum() or ch=='-')
     if not value:return None
     try:
-        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.3'}) as client:
+        with httpx.Client(timeout=6.0,headers={'Accept':'application/json','User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
             r=client.get(f'https://api.planespotters.net/pub/photos/{kind}/{value}');r.raise_for_status();d=r.json()
         photos=d.get('photos') or []
         if not photos:return None
@@ -2428,7 +2445,7 @@ def _commons_aircraft_photo(search_text):
     try:
         params={'action':'query','generator':'search','gsrsearch':f'{query} aircraft','gsrnamespace':6,'gsrlimit':12,
                 'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':900,'format':'json','origin':'*'}
-        with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.3'}) as client:
+        with httpx.Client(timeout=httpx.Timeout(8.0,connect=4.0),follow_redirects=True,headers={'User-Agent':'SKYLINE-Airways/1.3.4'}) as client:
             r=client.get('https://commons.wikimedia.org/w/api.php',params=params);r.raise_for_status();body=r.json()
         pages=list(((body.get('query') or {}).get('pages') or {}).values())
         tokens=[x.lower() for x in re.findall(r'[A-Za-z0-9]+',query) if len(x)>=3]
@@ -2486,8 +2503,7 @@ def api_live_traffic(ident:str):
 @app.get('/api/live-traffic/world')
 def api_live_traffic_world(request:Request):
     with SessionLocal() as db:require_user(request,db)
-    count=_fr24_live_count() if _fr24_token() else {'ok':False,'count':0}
-    return {'source':'Flightradar24 API' if _fr24_token() else 'unavailable','states':[],'configured':bool(_fr24_token()),'real_only':True,'scope':'world-aggregated','total_count':0,'tracked_count':int(count.get('count') or 0),'airborne_count':0,'ground_count':0,'memory_safe':True,'message':'Vue mondiale agrégée. Zoome pour charger les positions FR24 de la zone visible.'}
+    return {'source':'Flightradar24 API' if _fr24_token() else 'unavailable','states':[],'configured':bool(_fr24_token()),'real_only':True,'scope':'world-aggregated','total_count':0,'tracked_count':0,'tracked_count_available':False,'airborne_count':0,'ground_count':0,'memory_safe':True,'message':'Vue mondiale agrégée. Zoome pour charger les positions FR24 de la zone visible.'}
 
 @app.get('/api/live-traffic/box')
 def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:int=5000):
@@ -2503,7 +2519,7 @@ def api_live_traffic_box(lamin:float,lomin:float,lamax:float,lomax:float,limit:i
         except Exception as e:fr24_error=type(e).__name__
     try:
         params={'lamin':lamin,'lomin':lomin,'lamax':lamax,'lomax':lomax}
-        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.3'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
+        with httpx.Client(timeout=7.0,headers={'User-Agent':'SKYLINE-Airways/1.3.4'}) as client:r=client.get('https://opensky-network.org/api/states/all',params=params);r.raise_for_status();raw=r.json().get('states') or []
         states=[]
         for x in raw[:limit]:
             if len(x)<11 or x[5] is None or x[6] is None:continue

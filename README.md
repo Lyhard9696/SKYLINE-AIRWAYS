@@ -1,4 +1,4 @@
-# SKYLINE AIRWAYS — v1.3.3 Premium Operations
+# SKYLINE AIRWAYS — v1.3.4 Premium Operations
 
 Build FastAPI/SQLAlchemy/MapLibre du projet SKYLINE AIRWAYS, optimisée pour Render 512 Mo et l’interface premium des maquettes validées.
 
@@ -79,3 +79,7 @@ python tests/smoke_v13.py
 ## Limites des sources
 
 FAA NOTAM Search est un service public de consultation et non une API développeur avec SLA. Skyline utilise donc un cache et un comportement de repli propre. AviationWeather.gov est la source publique pour METAR/TAF/SIGMET. Ces données sont destinées au gameplay et à l'immersion du simulateur, pas à la préparation d'un vol réel.
+
+
+## Hotfix v1.3.4
+Voir `CHANGELOG_v1.3.4.md` pour la correction du diagnostic FR24 mondial.
