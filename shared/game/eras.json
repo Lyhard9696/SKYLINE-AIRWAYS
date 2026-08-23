@@ -1,0 +1,140 @@
+[
+  {
+    "id": "modern_optimization",
+    "name": "Optimisation moderne",
+    "order": 1,
+    "description": "Optimisation du réseau, maintenance prédictive et planification équipage.",
+    "requirements": {
+      "companyLevel": 1
+    },
+    "bonuses": [
+      {
+        "id": "era1_fuel",
+        "category": "fuel",
+        "mode": "percentage",
+        "value": -2
+      },
+      {
+        "id": "era1_maintenance",
+        "category": "maintenance",
+        "mode": "percentage",
+        "value": -3
+      }
+    ],
+    "unlocks": [
+      "Optimisation réseau",
+      "Maintenance prédictive",
+      "Planification équipage améliorée"
+    ]
+  },
+  {
+    "id": "energy_transition",
+    "name": "Transition énergétique",
+    "order": 2,
+    "description": "SAF, nouvelle génération de flotte et réputation environnementale.",
+    "requirements": {
+      "companyLevel": 10,
+      "reputation": 20
+    },
+    "bonuses": [
+      {
+        "id": "era2_fuel",
+        "category": "fuel",
+        "mode": "percentage",
+        "value": -3
+      },
+      {
+        "id": "era2_reputation",
+        "category": "reputation",
+        "mode": "percentage",
+        "value": 2
+      }
+    ],
+    "unlocks": [
+      "SAF",
+      "Contrats durables",
+      "Optimisation masse"
+    ]
+  },
+  {
+    "id": "ultra_efficient",
+    "name": "Aviation ultra-efficiente",
+    "order": 3,
+    "description": "Motorisations, matériaux et cabines nouvelle génération.",
+    "requirements": {
+      "companyLevel": 20,
+      "reputation": 40
+    },
+    "bonuses": [
+      {
+        "id": "era3_maintenance",
+        "category": "maintenance",
+        "mode": "percentage",
+        "value": -4
+      },
+      {
+        "id": "era3_aircraft",
+        "category": "aircraft_purchase",
+        "mode": "percentage",
+        "value": -2
+      }
+    ],
+    "unlocks": [
+      "Matériaux avancés",
+      "Motorisations nouvelle génération",
+      "Cabines avancées"
+    ]
+  },
+  {
+    "id": "regional_new_propulsion",
+    "name": "Nouvelles propulsions régionales",
+    "order": 4,
+    "description": "Hybride, électrique régional et infrastructures associées.",
+    "requirements": {
+      "companyLevel": 30,
+      "reputation": 60
+    },
+    "bonuses": [
+      {
+        "id": "era4_route",
+        "category": "route_creation",
+        "mode": "percentage",
+        "value": -5
+      }
+    ],
+    "unlocks": [
+      "Hybride",
+      "Électrique régional",
+      "Infrastructure nouvelle propulsion"
+    ]
+  },
+  {
+    "id": "intelligent_network",
+    "name": "Réseau intelligent",
+    "order": 5,
+    "description": "Hubs intelligents, opérations assistées et coordination alliance.",
+    "requirements": {
+      "companyLevel": 45,
+      "reputation": 80
+    },
+    "bonuses": [
+      {
+        "id": "era5_training",
+        "category": "training",
+        "mode": "percentage",
+        "value": -5
+      },
+      {
+        "id": "era5_demand",
+        "category": "demand",
+        "mode": "percentage",
+        "value": 3
+      }
+    ],
+    "unlocks": [
+      "Hubs intelligents",
+      "Coordination alliance avancée",
+      "Maintenance anticipative avancée"
+    ]
+  }
+]

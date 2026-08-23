@@ -1,205 +1,324 @@
-# SKYLINE AIRWAYS — v0.6 PREMIUM REALISM
+# Aviation Patch — FR24 monde + METAR/TAF + compagnies + alliances/ères
 
-Mise à jour jouable de SKYLINE AIRWAYS pour Render, iPhone/iPad et PC. Cette version conserve le moteur full-stack de la v0.5.1 Stability et refond l’expérience autour d’une interface plus réaliste, plus claire et moins « science-fiction ».
+Ce dossier est un **patch autonome prêt à versionner dans GitHub**. Il ne contient aucune clé secrète.
 
-## Installation depuis GitHub
+Il fournit :
+- FR24 `live/flight-positions/full` côté serveur ;
+- mode **monde entier** par tuiles + déduplication `fr24_id` ;
+- aucune restriction aux avions au sol ;
+- compteurs `positions / en vol / sol estimé / inconnu` ;
+- mode `bounds` pour n'interroger que la vue du globe ;
+- cache serveur pour éviter une requête FR24 par joueur ;
+- livery : `painted_as` > `operating_as` > callsign > neutre ;
+- METAR/TAF via AviationWeather.gov côté serveur ;
+- photos avion paresseuses via Planespotters (optionnel) ;
+- seed de grandes compagnies mondiales + résolution FR24 dynamique ;
+- configurations "Prochaines ères" ;
+- niveaux/bonus d'alliance ;
+- moteur central de modificateurs économiques.
 
-Décompresse le ZIP puis envoie **le contenu du dossier** à la racine du dépôt GitHub existant. Les fichiers doivent rester organisés ainsi :
+## Quel dossier utiliser ?
+
+Deux variantes backend sont incluses :
+
+- `node-service/` : Node 20 + Express — recommandé si ton projet est JS/TS/React/Vite/Next côté frontend.
+- `python-service/` : Python 3.11 + Flask — si ton backend actuel est Python.
+
+**N'en déploie qu'une seule.**
+
+Le dossier `frontend-integration/` contient un client JS utilisable avec les deux backends.
+
+---
+
+## Render — variables
+
+Dans **Render > Environment** :
 
 ```text
-main.py
-models.py
-logic.py
-catalog.py
-requirements.txt
-render.yaml
-README.md
-data/
-static/
-templates/
+FR24_API_TOKEN=<ton token production>
+FR24_WORLD_STRATEGY=tiles
+FR24_CACHE_SECONDS=15
+CORS_ORIGIN=https://ton-domaine.example
 ```
 
-Tu peux laisser Render redéployer automatiquement après le commit.
+Ne mets jamais le token dans le frontend.
 
-Commit conseillé :
+### Important : token production
+Le service utilise par défaut :
 
 ```text
-SKYLINE v0.6 Premium Realism
+https://fr24api.flightradar24.com/api
 ```
 
-La base PostgreSQL existante reste compatible. Les nouvelles tables v0.6 sont créées automatiquement au démarrage.
+et **pas le sandbox**.
 
-## Nouveautés principales
+Si ton token est un token sandbox, FR24 renverra des données statiques/prédéfinies. Il faut un token API production pour voir le trafic réel.
 
-### Nouvelle direction visuelle
+---
 
-- interface aviation premium contemporaine ;
-- palette claire blanc cassé / bleu aviation / or discret ;
-- cartes et images satellite restent au centre du jeu ;
-- moins d’éléments « futuristes » et davantage d’ergonomie de vraie application de gestion aérienne ;
-- nouvelle page **Accueil** avec progression, KPI, hub principal, quêtes, équipages et vols en cours ;
-- navigation mobile simplifiée à six onglets ;
-- menu « Plus » pour les écrans secondaires.
+# Pourquoi tu voyais "19 positions / 11 sol"
 
-### Niveau joueur et progression
+Le patch ne filtre pas les avions au sol ni les avions en vol.
 
-Le niveau joueur est calculé à partir de :
+Un petit nombre de positions vient généralement de :
+1. `bounds` trop petit ;
+2. `limit` trop faible ;
+3. token sandbox ;
+4. filtre accidentel (`airports`, `categories`, `altitude_ranges`, etc.) ;
+5. appel limité à un aéroport ou une zone.
 
-- rotations réellement terminées ;
-- quêtes quotidiennes récupérées ;
-- hubs ;
-- avions ;
-- routes ;
-- personnel ;
-- améliorations des hubs ;
-- réputation gagnée.
+Le endpoint du patch :
 
-Les grandes phases affichées dans le jeu sont : Fondateur, Compagnie internationale, Groupe aérien puis Opérateur mondial.
+```text
+GET /api/fr24/live?scope=world
+```
 
-### Quêtes quotidiennes
+agrège des tuiles mondiales et déduplique les avions.
 
-Trois objectifs journaliers dynamiques :
+Exemple de réponse :
 
-- rotations terminées ;
-- passagers transportés ;
-- satisfaction du hub principal.
+```json
+{
+  "ok": true,
+  "scope": "world",
+  "provider": "flightradar24",
+  "mode": "full",
+  "count": 16842,
+  "stats": {
+    "airborne": 15122,
+    "groundEstimated": 1504,
+    "unknown": 216
+  },
+  "data": []
+}
+```
 
-Une quête terminée peut être récupérée depuis l’accueil et donne de l’argent + de l’XP.
+**Le compteur sol est une estimation d'affichage. Il ne sert jamais à filtrer les données.**
 
-### Satisfaction propre à chaque hub
+---
 
-Chaque hub possède désormais :
+# Mode conseillé pour le globe
 
-- une note de satisfaction globale ;
-- ponctualité ;
-- embarquement ;
-- sécurité ;
-- bagages ;
-- confort ;
-- accès.
+## Vue monde
+```text
+/api/fr24/live?scope=world
+```
 
-La note dépend notamment des améliorations du hub, infrastructures acquises, personnel disponible et congestion opérationnelle.
+## Quand le joueur zoome
+```text
+/api/fr24/live?bounds=N,S,W,E
+```
 
-### CDG, Nice, Limoges et profils locaux
+Cela permet :
+- d'afficher l'ensemble mondial quand le globe est éloigné ;
+- de passer à des données ciblées quand on zoome ;
+- d'éviter de télécharger des dizaines de milliers d'objets toutes les quelques secondes.
 
-La v0.6 ajoute une couche de profil réaliste pour différencier les hubs. Exemples :
+---
 
-- **CDG / LFPG** : grand hub intercontinental, RER B, TGV, RoissyBus, taxi/VTC ;
-- **Nice / LFMN** : hub premium méditerranéen, tram L2/L3, tourisme, business et saisonnalité ;
-- **Limoges / LFBL** : aéroport régional, bus/navette, route, taxi et développement progressif.
+# Attention aux crédits FR24
 
-Le moteur possède aussi des profils pour plusieurs grands hubs mondiaux et un comportement générique selon la catégorie réelle de l’aéroport.
+Le mode `tiles` vise la couverture mondiale et peut coûter beaucoup de crédits.
 
-### Hub aérien amélioré
+Le cache est donc partagé côté serveur :
+- requêtes identiques réutilisées pendant `FR24_CACHE_SECONDS` ;
+- plusieurs joueurs ne provoquent pas chacun un nouveau balayage mondial.
 
-- les fenêtres « Explore ton aéroport » et « Globe 360 » ne bloquent plus l’écran au chargement ;
-- les inspecteurs sont fermés par défaut et ne s’ouvrent qu’après un clic utile ;
-- les terminaux OpenStreetMap sont maintenant récupérés lorsque disponibles ;
-- terminaux, pistes, taxiways, gates et parkings restent visibles sur le fond satellite ;
-- gates/parkings/pistes non acquis restent gris/verrouillés ;
-- les anciennes grosses pastilles d’amélioration ne sont plus l’affichage principal ;
-- les marqueurs de services sont masqués par défaut et peuvent être activés avec le bouton Services.
+Pour réduire la consommation :
+```text
+FR24_WORLD_STRATEGY=single
+```
 
-### Équipages : recrutement manuel, affectation automatique
+`single` fait un seul appel monde avec `limit=20000`. C'est moins cher, mais si le résultat atteint exactement 20 000, il peut être plafonné. Le mode `tiles` est le mode prévu pour rechercher une couverture plus complète.
 
-Le joueur recrute ses pilotes et PNC mais ne crée pas les plannings à la main.
+---
 
-OPS calcule automatiquement :
+# Frontend
 
-- qualification appareil ;
-- pilotes disponibles au hub ;
-- pilotes requis sur le vol ;
-- équipage renforcé sur long-courrier ;
-- effectif recommandé pour permettre la rotation et le repos ;
-- couverture du pool équipage ;
-- risque fatigue ;
-- personnel contractuel temporaire si l’effectif réellement requis manque.
+Copie/import le module :
 
-Exemple : un court/moyen-courrier utilise normalement 2 pilotes en service, mais un pool de 4 pilotes par appareil est recommandé pour que l’exploitation reste confortable. Un très long-courrier peut utiliser 4 pilotes sur le même vol et nécessiter un pool plus important pour les rotations suivantes.
+```text
+frontend-integration/aviation-live-client.js
+```
 
-### Banques réelles par pays
+Puis :
 
-L’espace Finance propose désormais des banques différentes selon le pays du hub principal, sans intégrer leurs logos dans le dépôt.
+```js
+import { AviationLiveClient } from "./aviation-live-client.js";
 
-Exemples :
+const aviation = new AviationLiveClient({
+  apiBase: ""
+});
 
-- France : BNP Paribas, Crédit Agricole, Société Générale, Caisse d’Épargne, HSBC Continental Europe ;
-- Royaume-Uni : HSBC UK, Barclays, Lloyds Bank ;
-- États-Unis : JPMorgan Chase, Bank of America, Citi ;
-- Japon : MUFG, SMBC ;
-- Émirats : Emirates NBD, First Abu Dhabi Bank ;
-- Espagne : Santander, BBVA, CaixaBank ;
-- Mexique : BBVA México, Banorte, HSBC México.
+const result = await aviation.getWorldFlights();
 
-Chaque banque possède un taux de base, un plafond, un niveau joueur minimal et un positionnement différent.
+console.log(result.count);
+console.log(result.stats.airborne);
+console.log(result.stats.groundEstimated);
+```
 
-### Hôtels géolocalisés
+Le statut à afficher peut être :
 
-L’espace Hôtels distingue :
+```text
+Flightradar24 OK · full · 16842 positions · 15122 en vol · 1504 sol estimé
+```
 
-1. **partenariats hôteliers** proposés selon le marché du hub ;
-2. **hôtels appartenant au groupe**, beaucoup plus tardifs.
+Ne plus afficher seulement :
 
-Les partenariats demandent un niveau joueur et une satisfaction minimum. Construire son propre hôtel demande le niveau joueur 20 et une satisfaction de hub d’au moins 70 %.
+```text
+19 positions / 11 sol
+```
 
-### Création de rotation sur iPhone
+sans donner le nombre d'avions en vol.
 
-Le formulaire de création de ligne est désormais replié sur mobile. Il ne prend plus tout l’écran en permanence : le bouton « Créer une nouvelle rotation » l’ouvre uniquement quand le joueur en a besoin.
+---
 
-## Simulation des vols
+# METAR / TAF
 
-`SIM_SPEED = 3.0` : environ 33 % du temps réel.
+```text
+GET /api/aviation/metar?icao=LFPG
+GET /api/aviation/taf?icao=LFPG
+```
 
-Un vol de 8 h réelles dure donc environ 2 h 40 dans le jeu. Les phases sol restent simulées : nettoyage, catering, ravitaillement, embarquement, pushback, taxi, vol, taxi arrivée et débarquement.
+Open-Meteo peut rester pour la météo générale mais n'est plus utilisé comme source METAR/TAF.
 
-## Globe, trafic et météo
+---
 
-- MapLibre en projection globe ;
-- fond satellite Esri ;
-- radar météo RainViewer lorsque disponible ;
-- Open-Meteo pour les conditions cockpit ;
-- couche jour/nuit ;
-- routes SKYLINE ;
-- avions SKYLINE ;
-- trafic FR24 si `FR24_API_TOKEN` officiel est configuré ;
-- sinon OpenSky lorsqu’il répond.
+# Photos
 
-## Données embarquées
+```text
+GET /api/aircraft/photo?reg=F-GZND&hex=...
+```
 
-- 85k+ aéroports/héliports/bases ;
-- 591 types d’aéronefs ;
-- données pistes ;
-- catalogue avion et variantes selon les données disponibles.
+À appeler uniquement quand le joueur sélectionne un avion.
 
-## Render / stabilité
+Si aucune photo n'existe, le frontend doit afficher un modèle/silhouette neutre — jamais la photo d'une autre compagnie.
 
-Le `render.yaml` conserve :
+---
 
-- un seul Web Service ;
-- PostgreSQL `skyline-db` ;
-- `MALLOC_ARENA_MAX=2` ;
-- caches mémoire bornés ;
-- limites de trafic et géométrie OSM adaptées aux 512 Mo du plan gratuit.
+# Livrées
 
-## Vérifications effectuées avant packaging
+Ordre strict :
 
-- compilation Python ;
-- syntaxe JavaScript validée avec Node ;
-- création de compte ;
-- achat de CDG ;
-- lecture du nouvel état v0.6 ;
-- calcul niveau joueur ;
-- calcul satisfaction hub ;
-- quêtes quotidiennes ;
-- catalogue bancaire France ;
-- prêt BNP Paribas + remboursement ;
-- offres hôtelières géolocalisées ;
-- chargement de la page jeu avec `premium.css`.
+```text
+painted_as
+operating_as
+préfixe callsign connu
+UNKNOWN
+```
 
-## Important
+Donc :
+- `painted_as=AFR` => Air France ;
+- un `A350` sans compagnie fiable n'est **jamais** transformé en Air China simplement parce que c'est un A350.
 
-Cette version reste un prototype personnel Web. Les noms de marques réelles utilisés comme données de jeu ne signifient aucun partenariat ou affiliation officielle. Une diffusion commerciale nécessitera une revue juridique/licences des marques, livrées et contenus tiers.
+---
 
-## v0.7.1 — FR24 READY
+# Prochaines ères
 
-See `FR24_SETUP.md` for secure Flightradar24 configuration and diagnostics. See `REALISM_3D_ROADMAP.md` for the Unreal Engine / Pixel Streaming path to photorealistic cockpits, volumetric clouds and fully 3D airports.
+Données :
+```text
+shared/game/eras.json
+```
+
+Endpoint :
+```text
+GET /api/game/eras
+```
+
+Les bonus sont exprimés sous forme de modificateurs économiques et doivent être branchés dans les coûts réels du jeu.
+
+---
+
+# Alliances
+
+Données :
+```text
+shared/game/alliance-levels.json
+shared/game/alliance-goals.json
+```
+
+Endpoint :
+```text
+GET /api/game/alliance-levels
+GET /api/game/alliance-goals
+```
+
+Calcul générique :
+```text
+POST /api/game/effective-cost
+```
+
+Exemple :
+
+```json
+{
+  "base": 1000000,
+  "modifiers": [
+    {"category":"route_creation","mode":"percentage","value":-10}
+  ]
+}
+```
+
+---
+
+# Tests rapides après déploiement
+
+```text
+GET /health
+GET /api/fr24/live?scope=world
+GET /api/fr24/live?bounds=51.5,48.5,0.5,5.5
+GET /api/aviation/metar?icao=LFPG
+GET /api/aviation/taf?icao=LFPG
+GET /api/fr24/airline/AFR
+GET /api/game/eras
+GET /api/game/alliance-levels
+```
+
+Dans `/api/fr24/live?scope=world`, vérifie :
+- `count` est nettement supérieur à 19 avec un token production valide ;
+- `stats.airborne` existe ;
+- `stats.groundEstimated` n'est qu'une sous-partie ;
+- des avions avec `altitudeFt > 0` sont présents ;
+- `liveryCode` suit `painted_as`.
+
+---
+
+# Déploiement Render — Node
+
+Root directory :
+```text
+aviation_patch_github/node-service
+```
+
+Build command :
+```text
+npm install
+```
+
+Start command :
+```text
+npm start
+```
+
+# Déploiement Render — Python
+
+Root directory :
+```text
+aviation_patch_github/python-service
+```
+
+Build command :
+```text
+pip install -r requirements.txt
+```
+
+Start command :
+```text
+gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 60
+```
+
+---
+
+# Limite importante
+
+Sans les fichiers de ton dépôt actuel, ce ZIP ne peut pas remplacer automatiquement les composants de ton interface déjà existante. Il fournit cependant le backend/API et la logique de jeu sous forme autonome et intégrable sans exposer le token.

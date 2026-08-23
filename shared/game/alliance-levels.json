@@ -1,0 +1,139 @@
+[
+  {
+    "level": 1,
+    "xp": 0,
+    "bonuses": []
+  },
+  {
+    "level": 2,
+    "xp": 1000,
+    "bonuses": [
+      {
+        "category": "training",
+        "mode": "percentage",
+        "value": -3
+      }
+    ]
+  },
+  {
+    "level": 3,
+    "xp": 3000,
+    "bonuses": [
+      {
+        "category": "route_creation",
+        "mode": "percentage",
+        "value": -5
+      }
+    ]
+  },
+  {
+    "level": 4,
+    "xp": 6500,
+    "bonuses": [
+      {
+        "category": "fuel",
+        "mode": "percentage",
+        "value": -2
+      }
+    ]
+  },
+  {
+    "level": 5,
+    "xp": 11000,
+    "bonuses": [
+      {
+        "category": "maintenance",
+        "mode": "percentage",
+        "value": -4
+      }
+    ]
+  },
+  {
+    "level": 6,
+    "xp": 18000,
+    "bonuses": [
+      {
+        "category": "aircraft_purchase",
+        "mode": "percentage",
+        "value": -2
+      },
+      {
+        "category": "aircraft_lease",
+        "mode": "percentage",
+        "value": -1
+      }
+    ]
+  },
+  {
+    "level": 7,
+    "xp": 28000,
+    "bonuses": [
+      {
+        "category": "demand",
+        "mode": "percentage",
+        "value": 2
+      }
+    ],
+    "unlocks": [
+      "codeshare"
+    ]
+  },
+  {
+    "level": 8,
+    "xp": 42000,
+    "bonuses": [
+      {
+        "category": "training",
+        "mode": "percentage",
+        "value": -8
+      },
+      {
+        "category": "fuel",
+        "mode": "percentage",
+        "value": -4
+      }
+    ]
+  },
+  {
+    "level": 9,
+    "xp": 62000,
+    "bonuses": [
+      {
+        "category": "route_creation",
+        "mode": "percentage",
+        "value": -10
+      },
+      {
+        "category": "maintenance",
+        "mode": "percentage",
+        "value": -7
+      }
+    ]
+  },
+  {
+    "level": 10,
+    "xp": 90000,
+    "bonuses": [
+      {
+        "category": "fuel",
+        "mode": "percentage",
+        "value": -7
+      },
+      {
+        "category": "training",
+        "mode": "percentage",
+        "value": -12
+      },
+      {
+        "category": "route_creation",
+        "mode": "percentage",
+        "value": -15
+      },
+      {
+        "category": "aircraft_purchase",
+        "mode": "percentage",
+        "value": -5
+      }
+    ]
+  }
+]

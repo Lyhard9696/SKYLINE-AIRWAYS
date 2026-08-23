@@ -1,0 +1,37 @@
+[
+  {
+    "id": "passengers_2m",
+    "name": "Transporter 2 000 000 passagers",
+    "metric": "passengers",
+    "target": 2000000,
+    "xpReward": 2500
+  },
+  {
+    "id": "new_countries_5",
+    "name": "Desservir 5 nouveaux pays",
+    "metric": "newCountries",
+    "target": 5,
+    "xpReward": 1800
+  },
+  {
+    "id": "connections_10",
+    "name": "Créer 10 connexions entre membres",
+    "metric": "memberConnections",
+    "target": 10,
+    "xpReward": 2200
+  },
+  {
+    "id": "otp_88",
+    "name": "Atteindre 88 % de ponctualité moyenne",
+    "metric": "onTimePerformance",
+    "target": 88,
+    "xpReward": 2000
+  },
+  {
+    "id": "intercontinental_3",
+    "name": "Ouvrir 3 liaisons intercontinentales",
+    "metric": "newIntercontinentalRoutes",
+    "target": 3,
+    "xpReward": 1800
+  }
+]
